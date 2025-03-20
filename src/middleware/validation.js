@@ -56,8 +56,7 @@ const validateProjectUpdate = [
     }
 ];
 
-const validateTask = [
-    // Validar que el título de la tarea no esté vacío
+const validateTaskCreation= [    // Validar que el título de la tarea no esté vacío
     body('title')
         .notEmpty().withMessage('The task title is required'), // Verifica que el título no esté vacío
     
@@ -88,4 +87,30 @@ const validateTask = [
     }
 ];
 
-module.exports = { validateProjectCreation, validateProjectUpdate, validateTask };
+const validateTaskUpdate = [
+    body('title')
+        .optional()
+        .notEmpty().withMessage('El título no puede estar vacío')
+        .isString().withMessage('El título debe ser un texto'),
+    body('creation_date')
+        .optional()
+        .isISO8601().withMessage('La fecha de inicio debe tener un formato válido'),
+    body('completion_date')
+        .optional()
+        .isISO8601().withMessage('La fecha de finalización debe tener un formato válido')
+        .custom((value, { req }) => {
+            if (req.body.creation_date && new Date(value) <= new Date(req.body.startDate)) {
+                throw new Error('La fecha de finalización debe ser mayor a la de inicio.');
+            }
+            return true;
+        }),
+    (req, res, next) => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ errors: errors.array() });
+        }
+        next();
+    }
+];
+
+module.exports = { validateProjectCreation, validateProjectUpdate, validateTaskCreation, validateTaskUpdate };
