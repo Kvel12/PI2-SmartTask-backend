@@ -19,8 +19,17 @@ const Project = require('../models/project');
 async function createProject(req, res) {
     try {
       const { title, description, priority, culmination_date } = req.body;
-      const project = await Project.create({ title, description, priority, culmination_date });
-      res.status(201).json(project);
+
+      // Verificar si el nombre del proyecto ya existe
+      const existingProject = await Project.findOne({ where: { title } });
+      if (existingProject) {
+          return res.status(400).json({ message: 'The project name is already in use, please change it.' });
+      }
+      
+      // Crear el proyecto en la base de datos si pasa la validacion
+      const project = await Project.create({title, description, priority, culmination_date });
+      return res.status(201).json(project);
+
     } catch (error) {
       res.status(500).json({ message: 'Error creating project' });
     }

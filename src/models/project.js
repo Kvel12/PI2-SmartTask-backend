@@ -5,7 +5,8 @@ const sequelize = require('../config/database');  // Importa la conexión a la b
 const Project = sequelize.define('Project', {
   title: {
     type: DataTypes.STRING(1000),  // Campo de tipo STRING con máximo 1000 caracteres
-    allowNull: false  // No puede ser nulo
+    allowNull: false,  // No puede ser nulo
+    unique: true // Asegura que nombre del proyecto sea único
   },
   description: {
     type: DataTypes.TEXT,  // Campo de tipo texto largo
