@@ -6,11 +6,11 @@ const Project = require('./project');  // Importa el modelo de Project
 const Task = sequelize.define('Task', {
   title: {
     type: DataTypes.STRING(1000),  // Título de la tarea, máximo 1000 caracteres
-    allowNull: false
+    allowNull: false // El titulo de la tarea es obligatorio
   },
   description: {
     type: DataTypes.TEXT,  // Descripción larga de la tarea
-    allowNull: true
+    allowNull: true // La descripción es opcional
   },
   creation_date: {
     type: DataTypes.DATE,
@@ -19,7 +19,7 @@ const Task = sequelize.define('Task', {
   },
   completion_date: {
     type: DataTypes.DATE,  // Fecha en la que se completó la tarea
-    allowNull: true
+    allowNull: false
   },
   status: {
     type: DataTypes.ENUM('in_progress', 'completed', 'pending', 'cancelled'),  // Estados posibles de la tarea

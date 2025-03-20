@@ -56,4 +56,36 @@ const validateProjectUpdate = [
     }
 ];
 
-module.exports = { validateProjectCreation, validateProjectUpdate };
+const validateTask = [
+    // Validar que el título de la tarea no esté vacío
+    body('title')
+        .notEmpty().withMessage('The task title is required'), // Verifica que el título no esté vacío
+    
+    // Validar que la fecha de inicio sea obligatoria y tenga un formato válido
+    body('creation_date')
+        .notEmpty().withMessage('The start date is required') // Verifica que la fecha de inicio no esté vacía
+        .isISO8601().withMessage('The start date must be in a valid ISO 8601 format'), // Verifica que la fecha tenga un formato válido
+    
+    // Validar que la fecha de finalización sea obligatoria, tenga un formato válido y sea mayor que la fecha de inicio
+    body('completion_date')
+        .notEmpty().withMessage('The completion date is required') // Verifica que la fecha de finalización no esté vacía
+        .isISO8601().withMessage('The completion date must be in a valid ISO 8601 format') // Verifica que la fecha tenga un formato válido
+        .custom((value, { req }) => {
+            if (new Date(value) <= new Date(req.body.creation_date)) {
+                throw new Error('The completion date must be later than the start date.'); // Verifica que la fecha de finalización sea mayor que la de inicio
+            }
+            return true;
+        }),
+    
+    // Middleware para manejar errores de validación
+    (req, res, next) => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            // Si hay errores de validación, devuelve un estado 400 con los errores
+            return res.status(400).json({ errors: errors.array() });
+        }
+        next(); // Continúa con el siguiente middleware o controlador de ruta si la validación pasa
+    }
+];
+
+module.exports = { validateProjectCreation, validateProjectUpdate, validateTask };
