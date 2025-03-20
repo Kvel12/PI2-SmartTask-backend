@@ -1,10 +1,13 @@
 const express = require('express');
-const { createProject } = require('../controllers/projectController');
-const { validateProject } = require('../middleware/validation');
+const { createProject, updateProject } = require('../controllers/projectController');
+const { validateProjectCreation, validateProjectUpdate } = require('../middleware/validation');
 
 const router = express.Router();
 
-//Usar el middleware antes de llamar a createProject
-router.post('/projects', validateProject, createProject);
+// Ruta para crear un proyecto con validaciones
+router.post('/projects', validateProjectCreation, createProject);
+
+// Ruta para actualizar un proyecto con validaciones
+router.post('/projects', validateProjectUpdate, updateProject);
 
 module.exports = router;

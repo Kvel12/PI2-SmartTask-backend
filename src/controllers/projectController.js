@@ -76,14 +76,23 @@ async function updateProject(req, res) {
   try {
     const { id } = req.params;
     const { title, description, priority, culmination_date } = req.body;
+
+     // Verificar si el proyecto existe     
     const project = await Project.findByPk(id);
     if (!project) {
       return res.status(404).json({ message: 'Project not found' });
+    }
+
+    // Verificar si el nuevo título ya está en uso por otro proyecto
+    const existingProject = await Project.findOne({ where: { title, id: { [Op.ne]: id } } });
+    if (existingProject) {
+      return res.status(400).json({ message: 'The project name is already in use, please choose another.' });
     }
     project.title = title;
     project.description = description;
     project.priority = priority;
     project.culmination_date = culmination_date;
+    
     await project.save();
     res.status(200).json(project);
   } catch (error) {
