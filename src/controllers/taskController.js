@@ -19,11 +19,22 @@ const Project = require('../models/project');
  */
 async function createTask(req, res) {
     try {
+      
+      // Validar errores de entrada
+      const errors = validationResult(req);
+          if (!errors.isEmpty()) {
+              return res.status(400).json({ errors: errors.array() });
+          }
+        
       const { title, description, projectId, status, completion_date } = req.body;
-      const project = await Project.findByPk(projectId);
-      if (!project) {
-        return res.status(404).json({ message: 'Project not found' });
+      
+      // Verificar si la tarea ya existe
+      const existingTask = await Task.findOne({ where: { title } });
+      if (existingTask) {
+          return res.status(400).json({ message: 'A task with this title already exists.' });
       }
+
+      // Crear la tarea asociada al proyecto si pasa las validaciones
       const task = await Task.create({ title, description, projectId, status, completion_date });
       res.status(201).json(task);
     } catch (error) {
