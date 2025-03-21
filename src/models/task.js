@@ -19,7 +19,8 @@ const Task = sequelize.define('Task', {
   },
   completion_date: {
     type: DataTypes.DATE,  // Fecha en la que se completó la tarea
-    allowNull: false
+    allowNull: false,
+
   },
   status: {
     type: DataTypes.ENUM('in_progress', 'completed', 'pending', 'cancelled'),  // Estados posibles de la tarea
@@ -32,7 +33,8 @@ const Task = sequelize.define('Task', {
     references: {
       model: Project,  // Relación con la tabla de proyectos
       key: 'id'
-    }
+    },
+    onDelete: 'CASCADE'  // Eliminar tareas en cascada al eliminar un proyecto
   }
 }, {
   timestamps: true  // Sequelize agrega automáticamente createdAt y updatedAt
