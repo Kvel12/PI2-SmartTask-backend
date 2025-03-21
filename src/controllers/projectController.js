@@ -92,7 +92,7 @@ async function updateProject(req, res) {
     project.description = description;
     project.priority = priority;
     project.culmination_date = culmination_date;
-    
+
     await project.save();
     res.status(200).json(project);
   } catch (error) {
@@ -117,11 +117,15 @@ async function updateProject(req, res) {
 async function deleteProject(req, res) {
   try {
     const { id } = req.params;
+
+    // Verificar si el proyecto existe
     const project = await Project.findByPk(id);
     if (!project) {
       return res.status(404).json({ message: 'Project not found' });
     }
+    // Eliminar el proyecto de la base de datos (se eliminan en cascada las tareas asociadas)
     await project.destroy();
+    
     logger.info(`Project deleted: ${project.id}`);
     res.status(204).send();
   } catch (error) {

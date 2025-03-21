@@ -88,28 +88,36 @@ const validateTaskCreation= [    // Validar que el título de la tarea no esté 
 ];
 
 const validateTaskUpdate = [
+    // Validar que el título, si está presente, no esté vacío y sea una cadena de texto
     body('title')
-        .optional()
-        .notEmpty().withMessage('El título no puede estar vacío')
-        .isString().withMessage('El título debe ser un texto'),
+        .optional() // El campo es opcional
+        .notEmpty().withMessage('The task title cannot be empty') // Verifica que el título no esté vacío
+        .isString().withMessage('The task title must be a string'), // Verifica que el título sea una cadena de texto
+
+    // Validar que la fecha de inicio, si está presente, tenga un formato válido
     body('creation_date')
-        .optional()
-        .isISO8601().withMessage('La fecha de inicio debe tener un formato válido'),
+        .optional() // El campo es opcional
+        .isISO8601().withMessage('The start date must be in a valid ISO 8601 format'), // Verifica que la fecha tenga un formato válido
+
+   // Validar que la fecha de finalización, si está presente, tenga un formato válido y sea mayor que la fecha de inicio
     body('completion_date')
-        .optional()
-        .isISO8601().withMessage('La fecha de finalización debe tener un formato válido')
+        .optional() // El campo es opcional
+        .isISO8601().withMessage('The completion date must be in a valid ISO 8601 format') // Verifica que la fecha tenga un formato válido
         .custom((value, { req }) => {
-            if (req.body.creation_date && new Date(value) <= new Date(req.body.startDate)) {
-                throw new Error('La fecha de finalización debe ser mayor a la de inicio.');
+            if (req.body.creation_date && new Date(value) <= new Date(req.body.creation_date)) {
+                throw new Error('The completion date must be later than the start date.'); // Verifica que la fecha de finalización sea mayor que la de inicio
             }
             return true;
         }),
+
+    // Middleware para manejar errores de validación
     (req, res, next) => {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
+            // Si hay errores de validación, devuelve un estado 400 con los errores
             return res.status(400).json({ errors: errors.array() });
         }
-        next();
+        next(); // Continúa con el siguiente middleware o controlador de ruta si la validación pasa
     }
 ];
 
