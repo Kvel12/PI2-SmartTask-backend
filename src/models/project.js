@@ -1,5 +1,7 @@
 const { DataTypes } = require('sequelize');  // Importa los tipos de datos de Sequelize
 const sequelize = require('../config/database');  // Importa la conexión a la base de datos
+const Task = require('./task'); //Importar el modelo task
+
 
 // Definición del modelo "Project"
 const Project = sequelize.define('Project', {
@@ -29,5 +31,12 @@ const Project = sequelize.define('Project', {
 }, {
   timestamps: true  // Agrega automáticamente createdAt y updatedAt
 });
+
+// Relación: Un proyecto tiene muchas tareas
+Project.hasMany(Task, {
+  foreignKey: 'projectId',
+  onDelete: 'CASCADE' // Eliminar tareas en cascada al eliminar un proyecto
+});
+Task.belongsTo(Project, { foreignKey: 'projectId' });
 
 module.exports = Project;  // Exporta el modelo
