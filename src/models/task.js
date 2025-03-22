@@ -31,7 +31,7 @@ const Task = sequelize.define('Task', {
     type: DataTypes.INTEGER,  // Clave foránea que asocia la tarea con un proyecto
     allowNull: false,
     references: {
-      model: Project,  // Relación con la tabla de proyectos
+      model: 'Project',  // Relación con la tabla de proyectos
       key: 'id'
     },
     onDelete: 'CASCADE'  // Eliminar tareas en cascada al eliminar un proyecto

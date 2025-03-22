@@ -1,5 +1,7 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
+const bcrypt = require('bcryptjs');
+
 
 // Definición del modelo "User"
 const User = sequelize.define('User', {
@@ -24,6 +26,22 @@ const User = sequelize.define('User', {
     type: DataTypes.DATE,  // Fecha de última actualización
     defaultValue: DataTypes.NOW
   }
+ }, {
+    timestamps: true,
+    hooks: {
+      beforeCreate: async (user) => {
+        if (user.password) {
+          const salt = await bcrypt.genSalt(10);
+          user.password = await bcrypt.hash(user.password, salt);
+        }
+      },
+      beforeUpdate: async (user) => {
+        if (user.changed('password')) {
+          const salt = await bcrypt.genSalt(10);
+          user.password = await bcrypt.hash(user.password, salt);
+        }
+      }
+    }
 });
 
 module.exports = User;  // Exporta el modelo

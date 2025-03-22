@@ -19,5 +19,21 @@ const sequelize = new Sequelize(
   }
 );
 
+// Función para conectar y sincronizar la base de datos
+const connectDB = async () => {
+  try {
+    await sequelize.authenticate();
+    console.log('Connection to the database established successfully.');
+
+    if (process.env.DB_SYNC === 'true') {
+      await sequelize.sync({ alter: true }); // Actualiza la base de datos sin perder datos
+      console.log('Database synchronized with the models.');
+    }
+  } catch (error) {
+    console.error('Error connecting to database:', error);
+    process.exit(1); // Detener la aplicación si no puede conectar a la BD
+  }
+};
+
 // Exporta la instancia de Sequelize para ser utilizada en otros archivos.
 module.exports = sequelize;
