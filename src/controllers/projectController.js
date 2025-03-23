@@ -134,4 +134,60 @@ async function deleteProject(req, res) {
   }
 }
 
+/**
+ * Obtiene un proyecto por su ID, incluyendo sus tareas asociadas.
+ * 
+ * @async
+ * @function getProjectById
+ * @param {Object} req - Objeto de solicitud de Express.
+ * @param {Object} req.params - Parámetros de la solicitud.
+ * @param {string} req.params.id - ID del proyecto a recuperar.
+ * @param {Object} res - Objeto de respuesta de Express.
+ * @returns {Promise<void>} Envía una respuesta JSON con el proyecto encontrado o un mensaje de error.
+ * 
+ * @throws {Error} - Devuelve un error 404 si el proyecto no se encuentra o un error 500 si ocurre un problema en el servidor.
+ */
+async function getProjectById(req, res) {
+  try {
+    const { id } = req.params;
+
+    // Buscar el proyecto por ID e incluir las tareas asociadas
+    const project = await Project.findByPk(id, { include: Task });
+
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    res.status(200).json(project);
+  } catch (error) {
+    res.status(500).json({ message: 'Error getting project' });
+  }
+}
+
+/**
+ * Recupera todos los IDs de los proyectos almacenados en la base de datos.
+ * 
+ * @async
+ * @function getAllProjectIds
+ * @param {Object} req - Objeto de solicitud de Express.
+ * @param {Object} res - Objeto de respuesta de Express.
+ * @returns {Promise<void>} Envía una respuesta JSON con una lista de IDs de proyectos o un mensaje de error.
+ * 
+ * @throws {Error} - Devuelve un error 500 si ocurre un problema al recuperar los IDs de los proyectos.
+ */
+async function getAllProjectIds(req, res) {
+  try {
+    // Obtener todos los proyectos y extraer solo los IDs
+    const projects = await Project.findAll({
+      attributes: ['id']
+    });
+
+    const projectIds = projects.map(project => project.id);
+
+    res.status(200).json(projectIds);
+  } catch (error) {
+    res.status(500).json({ message: 'Error getting project IDs' });
+  }
+}
+
 module.exports = { createProject, getAllProjects, updateProject, deleteProject };
