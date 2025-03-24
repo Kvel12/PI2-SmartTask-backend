@@ -3,12 +3,12 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const path = require('path');
 const sequelize = require(path.join(__dirname, 'config', 'database'));
-
+const initDB = require(path.join(__dirname, 'scripts', 'initDB.js'));
 const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
 const taskRoutes = require('./routes/tasks');
 const authMiddleware = require('./middleware/auth');
-const initDB = require(path.join(__dirname, '..', 'scripts', 'initDB.js'));
+
 require('dotenv').config();
 
 const app = express();
