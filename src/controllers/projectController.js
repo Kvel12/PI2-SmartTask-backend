@@ -1,5 +1,5 @@
 const Project = require('../models/project');
-
+const logger = require('../logger');
 
 
 /**
@@ -28,9 +28,11 @@ async function createProject(req, res) {
       
       // Crear el proyecto en la base de datos si pasa la validacion
       const project = await Project.create({title, description, priority, culmination_date });
+      logger.info(`Project created: ${project.id}`);
       return res.status(201).json(project);
 
     } catch (error) {
+      logger.error('Error creating project', error);
       res.status(500).json({ message: 'Error creating project' });
     }
 }
@@ -50,6 +52,7 @@ async function getAllProjects(req, res) {
     const projects = await Project.findAll();
     res.status(200).json(projects);
   } catch (error) {
+    logger.error('Error getting projects', error);
     res.status(500).json({ message: 'Error getting projects' });
   }
 }
@@ -94,8 +97,10 @@ async function updateProject(req, res) {
     project.culmination_date = culmination_date;
 
     await project.save();
+    logger.info(`Project updated: ${project.id}`);
     res.status(200).json(project);
   } catch (error) {
+    logger.error('Error updating project', error);
     res.status(500).json({ message: 'Error updating project' });
   }
 }
@@ -157,9 +162,10 @@ async function getProjectById(req, res) {
     if (!project) {
       return res.status(404).json({ message: 'Project not found' });
     }
-
+    logger.info(`Project retrieved: ${project.id}`);
     res.status(200).json(project);
   } catch (error) {
+    logger.error('Error getting project', error);
     res.status(500).json({ message: 'Error getting project' });
   }
 }
@@ -183,9 +189,10 @@ async function getAllProjectIds(req, res) {
     });
 
     const projectIds = projects.map(project => project.id);
-
+    logger.info('Project IDs retrieved');
     res.status(200).json(projectIds);
   } catch (error) {
+    logger.error('Error getting project IDs', error);
     res.status(500).json({ message: 'Error getting project IDs' });
   }
 }

@@ -1,5 +1,6 @@
 const Task = require('../models/task');
 const Project = require('../models/project');
+const logger = require('../logger');
 
 /**
  * Crea una nueva tarea asociada a un proyecto específico.
@@ -36,8 +37,10 @@ async function createTask(req, res) {
 
       // Crear la tarea asociada al proyecto si pasa las validaciones
       const task = await Task.create({ title, description, projectId, status, completion_date });
+      logger.info(`Task created: ${task.id}`);
       res.status(201).json(task);
     } catch (error) {
+      logger.error('Error creating task', error);
       res.status(500).json({ message: 'Error creating task' });
     }
 }
@@ -58,6 +61,7 @@ async function getAllTasks(req, res) {
       const tasks = await Task.findAll();
       res.status(200).json(tasks);
     } catch (error) {
+      logger.error('Error getting tasks', error);
       res.status(500).json({ message: 'Error getting tasks' });
     }
 }
@@ -109,10 +113,11 @@ async function updateTask(req, res) {
       task.completion_date = completion_date;
       
       await task.save();
-      
+      logger.info(`Task updated: ${task.id}`);
       return res.status(200).json({ message: 'task updated successfully' });
 
     } catch (error) {
+      logger.error('Error updating task', error);
       res.status(500).json({ message: 'Error updating task' });
     }
 }
@@ -140,8 +145,10 @@ async function deleteTask(req, res) {
         return res.status(404).json({ message: 'Task not found' });
       }
       await task.destroy();
+      logger.info(`Task deleted: ${task.id}`);
       res.status(204).send();
     } catch (error) {
+      logger.error('Error deleting task', error);
       res.status(500).json({ message: 'Error deleting task' });
     }
 }
