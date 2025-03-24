@@ -1,4 +1,5 @@
-const { sequelize, User, Project, Task } = require('../src/models');
+const path = require('path');
+const { sequelize, User, Project, Task } = require(path.join(__dirname, '..', 'models'));
 const bcrypt = require('bcryptjs');
 
 async function initDB() {
