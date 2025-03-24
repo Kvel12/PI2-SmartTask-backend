@@ -1,14 +1,26 @@
-const sequelize = require('../config/database');  // Importa la conexión a la base de datos
+const sequelize = require('../config/database');
 const User = require('./user');
 const Project = require('./project');
 const Task = require('./task');
 
-// Definir relaciones entre modelos
-Project.hasMany(Task, { foreignKey: 'projectId', onDelete: 'CASCADE' });  // Un proyecto tiene muchas tareas
-Task.belongsTo(Project, { foreignKey: 'projectId' });  // Cada tarea pertenece a un proyecto
+// Definir asociaciones
+Project.hasMany(Task, { 
+  foreignKey: {
+    name: 'projectId',
+    allowNull: false
+  },
+  onDelete: 'CASCADE' 
+});
+
+Task.belongsTo(Project, { 
+  foreignKey: {
+    name: 'projectId',
+    allowNull: false
+  }
+});
 
 module.exports = {
-  sequelize,  // Exporta la instancia de Sequelize
+  sequelize,
   User,
   Project,
   Task

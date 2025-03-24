@@ -1,43 +1,36 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
-const Project = require('./project');  // Importa el modelo de Project
 
-// Definición del modelo "Task"
 const Task = sequelize.define('Task', {
+  id: {  // Agrega explícitamente el campo de ID
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   title: {
-    type: DataTypes.STRING(1000),  // Título de la tarea, máximo 1000 caracteres
-    allowNull: false // El titulo de la tarea es obligatorio
+    type: DataTypes.STRING(1000),
+    allowNull: false
   },
   description: {
-    type: DataTypes.TEXT,  // Descripción larga de la tarea
-    allowNull: true // La descripción es opcional
+    type: DataTypes.TEXT,
+    allowNull: true
   },
   creation_date: {
     type: DataTypes.DATE,
     allowNull: false,
-    defaultValue: DataTypes.NOW  // Fecha de creación por defecto
+    defaultValue: DataTypes.NOW
   },
   completion_date: {
-    type: DataTypes.DATE,  // Fecha en la que se completó la tarea
-    allowNull: false,
-
+    type: DataTypes.DATE,
+    allowNull: false
   },
   status: {
-    type: DataTypes.ENUM('in_progress', 'completed', 'pending', 'cancelled'),  // Estados posibles de la tarea
+    type: DataTypes.ENUM('in_progress', 'completed', 'pending', 'cancelled'),
     allowNull: false,
-    defaultValue: 'pending'  // Estado inicial
-  },
-  projectId: {
-    type: DataTypes.INTEGER,  // Clave foránea que asocia la tarea con un proyecto
-    allowNull: false,
-    references: {
-      model: 'Project',  // Relación con la tabla de proyectos
-      key: 'id'
-    },
-    onDelete: 'CASCADE'  // Eliminar tareas en cascada al eliminar un proyecto
+    defaultValue: 'pending'
   }
 }, {
-  timestamps: true  // Sequelize agrega automáticamente createdAt y updatedAt
+  timestamps: true
 });
 
-module.exports = Task;  // Exporta el modelo
+module.exports = Task;

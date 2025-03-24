@@ -1,42 +1,37 @@
-const { DataTypes } = require('sequelize');  // Importa los tipos de datos de Sequelize
-const sequelize = require('../config/database');  // Importa la conexión a la base de datos
-const Task = require('./task'); //Importar el modelo task
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
 
-
-// Definición del modelo "Project"
 const Project = sequelize.define('Project', {
+  id: {  // Agrega explícitamente el campo de ID
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
   title: {
-    type: DataTypes.STRING(1000),  // Campo de tipo STRING con máximo 1000 caracteres
-    allowNull: false,  // No puede ser nulo
-    unique: true // Asegura que nombre del proyecto sea único
+    type: DataTypes.STRING(1000),
+    allowNull: false,
+    unique: true
   },
   description: {
-    type: DataTypes.TEXT,  // Campo de tipo texto largo
-    allowNull: true  // Puede ser nulo
+    type: DataTypes.TEXT,
+    allowNull: true
   },
   creation_date: {
-    type: DataTypes.DATE,  // Tipo de dato fecha
+    type: DataTypes.DATE,
     allowNull: false,
-    defaultValue: DataTypes.NOW  // Se asigna la fecha actual por defecto
+    defaultValue: DataTypes.NOW
   },
   culmination_date: {
-    type: DataTypes.DATE,  // Fecha opcional de culminación del proyecto
+    type: DataTypes.DATE,
     allowNull: true
   },
   priority: {
-    type: DataTypes.ENUM('high', 'medium', 'low'),  // Define prioridad con valores predefinidos
+    type: DataTypes.ENUM('high', 'medium', 'low'),
     allowNull: true,
-    defaultValue: 'medium'  // Valor por defecto
+    defaultValue: 'medium'
   }
 }, {
-  timestamps: true  // Agrega automáticamente createdAt y updatedAt
+  timestamps: true
 });
 
-// Relación: Un proyecto tiene muchas tareas
-Project.hasMany(Task, {
-  foreignKey: 'projectId',
-  onDelete: 'CASCADE' // Eliminar tareas en cascada al eliminar un proyecto
-});
-Task.belongsTo(Project, { foreignKey: 'projectId' });
-
-module.exports = Project;  // Exporta el modelo
+module.exports = Project;

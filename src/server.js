@@ -3,7 +3,8 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const winston = require('winston');
 const path = require('path');
-const sequelize = require(path.join(__dirname, 'config', 'database'));
+const models = require(path.join(__dirname, 'models'));
+const sequelize = models.sequelize;
 const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
 const taskRoutes = require('./routes/tasks');
@@ -12,7 +13,7 @@ const authMiddleware = require('./middleware/auth');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 app.use(bodyParser.json());
 app.use(cors({
