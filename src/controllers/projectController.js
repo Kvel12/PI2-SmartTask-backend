@@ -197,4 +197,4 @@ async function getAllProjectIds(req, res) {
   }
 }
 
-module.exports = { createProject, getAllProjects, updateProject, deleteProject };
+module.exports = { createProject, getAllProjects, updateProject, deleteProject, getProjectById, getAllProjectIds };
