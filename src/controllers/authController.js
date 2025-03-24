@@ -112,4 +112,21 @@ async function login(req, res) {
   }
 }
 
-module.exports = { register, login };
+/**
+ * Maneja el cierre de sesión de un usuario.
+ *
+ * @function logout
+ * @param {Object} req - Objeto de solicitud HTTP.
+ * @param {Object} res - Objeto de respuesta HTTP.
+ * @returns {void} Envía una respuesta HTTP confirmando el cierre de sesión.
+ */
+function logout(req, res) {
+  try {
+    res.status(200).json({ message: "Logout successful." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error during logout." });
+  }
+}
+
+module.exports = { register, login, logout };
