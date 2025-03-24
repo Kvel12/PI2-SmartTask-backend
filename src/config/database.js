@@ -23,6 +23,7 @@ const sequelize = new Sequelize(
 );
 
 // Función para conectar y sincronizar la base de datos
+/*
 const connectDB = async () => {
   try {
     await sequelize.authenticate();
@@ -36,7 +37,7 @@ const connectDB = async () => {
     console.error('Error connecting to database:', error);
     process.exit(1); // Detener la aplicación si no puede conectar a la BD
   }
-};
+};*/
 
 // Exporta la instancia de Sequelize para ser utilizada en otros archivos.
 module.exports = sequelize;
