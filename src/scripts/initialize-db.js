@@ -1,5 +1,5 @@
 const path = require('path');
-const initDB = require('./initDB');
+const initDB = require(path.join(__dirname, 'initDB'));
 
 async function runInitDB() {
   try {
