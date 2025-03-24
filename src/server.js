@@ -2,13 +2,13 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const path = require('path');
-const sequelize = require('../config/database');
+const sequelize = require('./config/database');
 
-const authRoutes = require('../routes/auth');
-const projectRoutes = require('../routes/projects');
-const taskRoutes = require('../routes/tasks');
-const authMiddleware = require('../middleware/auth');
-const initDB = require('../scripts/initDB');
+const authRoutes = require('./routes/auth');
+const projectRoutes = require('./routes/projects');
+const taskRoutes = require('./routes/tasks');
+const authMiddleware = require('./middleware/auth');
+const initDB = require('./scripts/initDB');
 require('dotenv').config();
 
 const app = express();
