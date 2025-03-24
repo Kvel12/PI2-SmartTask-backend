@@ -1,6 +1,7 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const winston = require('winston');
 const path = require('path');
 const sequelize = require(path.join(__dirname, 'config', 'database'));
 const initDB = require(path.join(__dirname, 'scripts', 'initDB'));
