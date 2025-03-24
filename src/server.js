@@ -4,7 +4,6 @@ const cors = require('cors');
 const winston = require('winston');
 const path = require('path');
 const sequelize = require(path.join(__dirname, 'config', 'database'));
-const initDB = require(path.join(__dirname, 'scripts', 'initDB'));
 const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
 const taskRoutes = require('./routes/tasks');
@@ -50,9 +49,6 @@ sequelize.authenticate()
   })
   .then(() => {
     winston.info('Database synchronized');
-    return initDB(); // Ejecuta la inicialización
-  })
-  .then(() => {
     app.listen(PORT, () => {
       winston.info(`Server running on port ${PORT}`);
     });
