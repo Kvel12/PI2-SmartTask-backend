@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "init-db": "node scripts/initDB.js",
-    "start-and-init": "npm run init-db && npm start"
+    "build": "echo 'No build step required'"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -20,5 +20,8 @@
     "pg-hstore": "^2.3.3",
     "sequelize": "^6.6.5",
     "winston": "^3.3.3"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   }
 }
