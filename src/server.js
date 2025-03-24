@@ -48,8 +48,17 @@ sequelize.authenticate()
     winston.info('Database connection has been established successfully.');
     return sequelize.sync({ alter: process.env.NODE_ENV === 'production' ? false : true });
   })
-  .then(() => {
+  .then(async () => {
     winston.info('Database synchronized');
+    
+    // Log de los modelos
+    try {
+      const tableNames = await sequelize.getQueryInterface().showAllTables();
+      winston.info('Tablas creadas:', tableNames);
+    } catch (error) {
+      winston.error('Error listando tablas:', error);
+    }
+    
     app.listen(PORT, () => {
       winston.info(`Server running on port ${PORT}`);
     });
