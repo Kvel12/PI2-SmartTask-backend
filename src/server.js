@@ -8,7 +8,7 @@ const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
 const taskRoutes = require('./routes/tasks');
 const authMiddleware = require('./middleware/auth');
-const initDB = require('./scripts/initDB');
+const initDB = require(path.join(__dirname, 'scripts', 'initDB'));
 require('dotenv').config();
 
 const app = express();
