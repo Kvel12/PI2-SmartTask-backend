@@ -4,6 +4,8 @@ const { Sequelize } = require('sequelize');
 // Carga las variables de entorno desde un archivo .env.
 require('dotenv').config();  
 
+// Importa el logger para mostrar mensajes en la consola.
+const logger = require('../logger');
 // Crea una instancia de Sequelize con la configuración de la base de datos.
 const sequelize = new Sequelize(
   process.env.DB_NAME,  // Nombre de la base de datos
@@ -12,6 +14,7 @@ const sequelize = new Sequelize(
   {
     host: process.env.DB_HOST,  // Dirección del servidor de la base de datos
     dialect: 'postgres',  // Especifica que se usará PostgreSQL como base de datos
+    logging: (msg) => logger.info(msg),  // Muestra los mensajes de Sequelize en la consola
     define: {
       timestamps: true,  // Agrega automáticamente los campos createdAt y updatedAt a los modelos
       underscored: true, // Usa snake_case en lugar de camelCase para los nombres de columnas

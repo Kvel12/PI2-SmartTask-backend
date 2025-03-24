@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/user');
+const logger = require('../logger');
 require('dotenv').config();
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -49,8 +50,11 @@ async function register(req, res) {
     // Generar token con más información
     const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 
+    // Loggear el registro del usuario
+    logger.info(`User registered: ${user.id}`);
     res.status(201).json({ message: 'User registered successfully.', token });
   } catch (error) {
+    logger.error('Error registering user', error);
     console.error(error);
     res.status(500).json({ message: 'Error registering user.' });
   }
@@ -98,8 +102,11 @@ async function login(req, res) {
       { expiresIn: JWT_EXPIRES_IN }
     );
 
+    // Loggear el inicio de sesión del usuario
+    logger.info(`User logged in: ${user.id}`);
     res.status(200).json({ message: 'Login successful.', token });
   } catch (error) {
+    logger.error('Error logging in', error);
     console.error(error);
     res.status(500).json({ message: 'Error logging in.' });
   }
