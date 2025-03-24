@@ -1,6 +1,6 @@
 const express = require('express');
 const { createTask } = require('../controllers/taskController');
-const { validateTask, validateTaskCreation } = require('../middleware/validation');
+const { validateTaskUpdate, validateTaskCreation } = require('../middleware/validation');
 const auth = require('../middleware/auth');
 
 
