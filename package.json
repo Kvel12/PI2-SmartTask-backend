@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node src/server.js",
-    "init-db": "node scripts/initialize-db.js",
+    "init-db": "node src/scripts/initialize-db.js",
     "prestart": "npm run init-db",
     "build": "echo 'No build step required'"
   },
