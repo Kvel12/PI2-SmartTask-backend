@@ -14,20 +14,6 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
-/**
- * Registra un nuevo usuario en el sistema.
- *
- * @async
- * @function register
- * @param {Object} req - Objeto de solicitud HTTP.
- * @param {Object} req.body - Cuerpo de la solicitud que contiene los datos del usuario.
- * @param {string} req.body.username - Nombre de usuario del nuevo usuario.
- * @param {string} req.body.password - Contraseña del nuevo usuario.
- * @param {string} req.body.name - Nombre completo del nuevo usuario.
- * @param {Object} res - Objeto de respuesta HTTP.
- * @returns {void} Devuelve una respuesta HTTP con un token de autenticación o un mensaje de error.
- * @throws {Error} Devuelve un error 500 si ocurre un problema durante el registro.
- */
 async function register(req, res) {
   try {
     const { username, password, name } = req.body;
@@ -60,127 +46,76 @@ async function register(req, res) {
   }
 }
 
-/**
- * Maneja el inicio de sesión de un usuario.
- *
- * @async
- * @function login
- * @param {Object} req - Objeto de solicitud HTTP.
- * @param {Object} req.body - Cuerpo de la solicitud que contiene las credenciales del usuario.
- * @param {string} req.body.username - Nombre de usuario proporcionado por el cliente.
- * @param {string} req.body.password - Contraseña proporcionada por el cliente.
- * @param {Object} res - Objeto de respuesta HTTP.
- * @returns {void} Envía una respuesta HTTP con un token de autenticación si las credenciales son válidas,
- * o un mensaje de error si las credenciales son inválidas o si ocurre un error en el servidor.
- * @throws {Error} Devuelve un estado 500 si ocurre un error inesperado durante el proceso de inicio de sesión.
- */
 async function login(req, res) {
   try {
     const { username, password } = req.body;
 
-    // Validación detallada de entrada
-    if (!username || !password) {
-      return res.status(400).json({ 
-        error: 'VALIDATION_ERROR',
-        message: 'Username and password are required.',
-        details: {
-          username: username ? 'Provided' : 'Missing',
-          password: password ? 'Provided' : 'Missing'
-        }
-      });
-    }
+    // Debugging: Log the received credentials
+    console.log('Login attempt:', { username, password });
 
-    // Buscar usuario en la base de datos
     const user = await User.findOne({ where: { username } });
     if (!user) {
       return res.status(401).json({ 
         error: 'AUTH_ERROR',
-        message: 'User not found.',
-        details: { username }
+        message: 'User not found.'
       });
     }
 
-    // Comparación de contraseña con más detalles
-    let isMatch = false;
+    // Debugging: Log the stored hashed password
+    console.log('Stored hashed password:', user.password);
+
     try {
-      isMatch = await bcrypt.compare(password, user.password);
+      // Verbose logging of password comparison
+      const isMatch = await bcrypt.compare(password, user.password);
+      console.log('Password comparison result:', isMatch);
+
+      if (!isMatch) {
+        return res.status(401).json({ 
+          error: 'AUTH_ERROR',
+          message: 'Invalid credentials.',
+          details: { 
+            storedPasswordLength: user.password.length,
+            inputPasswordLength: password.length
+          }
+        });
+      }
+
+      // Rest of the login logic remains the same
+      const token = jwt.sign(
+        { 
+          userId: user.id, 
+          username: user.username
+        },
+        process.env.JWT_SECRET,
+        { 
+          expiresIn: JWT_EXPIRES_IN
+        }
+      );
+
+      res.status(200).json({ 
+        message: 'Login successful.',
+        token
+      });
+
     } catch (compareError) {
+      console.error('Bcrypt comparison error:', compareError);
       return res.status(500).json({
         error: 'BCRYPT_ERROR',
         message: 'Error during password comparison.',
         details: compareError.message
       });
     }
-    
-    // Verificación de contraseña
-    if (!isMatch) {
-      return res.status(401).json({ 
-        error: 'AUTH_ERROR',
-        message: 'Invalid credentials.',
-        details: { 
-          usernameFound: !!user,
-          passwordMatch: isMatch
-        }
-      });
-    }
-
-    // Verificación de JWT_SECRET
-    if (!JWT_SECRET) {
-      return res.status(500).json({
-        error: 'CONFIG_ERROR',
-        message: 'JWT Secret is not configured.'
-      });
-    }
-
-    // Generar token con más información de depuración
-    const token = jwt.sign(
-      { 
-        userId: user.id, 
-        username: user.username,
-        debugInfo: {
-          tokenGeneratedAt: new Date().toISOString(),
-          saltRounds: BCRYPT_SALT_ROUNDS
-        }
-      },
-      JWT_SECRET,
-      { 
-        expiresIn: JWT_EXPIRES_IN,
-        algorithm: 'HS256' // Especificar explícitamente el algoritmo
-      }
-    );
-
-    // Respuesta exitosa con más detalles
-    res.status(200).json({ 
-      message: 'Login successful.',
-      user: {
-        id: user.id,
-        username: user.username
-      },
-      token,
-      debugInfo: {
-        tokenExpiresIn: JWT_EXPIRES_IN,
-        tokenGeneratedAt: new Date().toISOString()
-      }
-    });
   } catch (error) {
-    // Respuesta de error detallada
+    console.error('Login error:', error);
     res.status(500).json({ 
       error: 'SERVER_ERROR',
       message: 'Error logging in.',
-      details: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      details: error.message
     });
   }
 }
 
-/**
- * Maneja el cierre de sesión de un usuario.
- *
- * @function logout
- * @param {Object} req - Objeto de solicitud HTTP.
- * @param {Object} res - Objeto de respuesta HTTP.
- * @returns {void} Envía una respuesta HTTP confirmando el cierre de sesión.
- */
+
 function logout(req, res) {
   try {
     res.status(200).json({ message: "Logout successful." });
