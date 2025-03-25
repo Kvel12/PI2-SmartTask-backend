@@ -1,3 +1,4 @@
+const { validationResult } = require('express-validator');
 const Task = require('../models/task');
 const Project = require('../models/project');
 const logger = require('../logger');

@@ -28,9 +28,15 @@ const Task = sequelize.define('Task', {
     type: DataTypes.ENUM('in_progress', 'completed', 'pending', 'cancelled'),
     allowNull: false,
     defaultValue: 'pending'
+  },
+  projectId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    field: 'project_id'
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  underscored: true
 });
 
 module.exports = Task;
