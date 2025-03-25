@@ -1,24 +1,31 @@
+// Importación de la instancia de Sequelize configurada
 const sequelize = require('../config/database');
+
+// Importación de los modelos de la base de datos
 const User = require('./user');
 const Project = require('./project');
 const Task = require('./task');
 
-// Definir asociaciones
+// Definición de las relaciones entre modelos
+
+// Un proyecto puede tener muchas tareas
 Project.hasMany(Task, { 
   foreignKey: {
-    name: 'projectId',
-    allowNull: false
+    name: 'projectId', // Clave foránea en la tabla Task que referencia a Project
+    allowNull: false // No permite valores nulos en la clave foránea
   },
-  onDelete: 'CASCADE' 
+  onDelete: 'CASCADE' // Si un proyecto se elimina, sus tareas asociadas también se eliminan
 });
 
+// Una tarea pertenece a un único proyecto
 Task.belongsTo(Project, { 
   foreignKey: {
-    name: 'projectId',
-    allowNull: false
+    name: 'projectId', // Clave foránea en la tabla Task que referencia a Project
+    allowNull: false // No permite valores nulos en la clave foránea
   }
 });
 
+// Exportación de la instancia de Sequelize y los modelos para su uso en otras partes de la aplicación
 module.exports = {
   sequelize,
   User,
