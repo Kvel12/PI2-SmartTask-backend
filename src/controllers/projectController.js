@@ -1,6 +1,6 @@
 const Project = require('../models/project');
 const logger = require('../logger');
-
+const Task = require('../models/task'); 
 
 /**
  * Crea un nuevo proyecto con los detalles proporcionados.

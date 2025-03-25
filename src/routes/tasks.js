@@ -3,17 +3,11 @@ const { createTask, updateTask, deleteTask } = require('../controllers/taskContr
 const { validateTaskUpdate, validateTaskCreation } = require('../middleware/validation');
 const auth = require('../middleware/auth');
 
-
 const router = express.Router();
 
-// Usar el middleware antes de crear una tarea
-router.post('/tasks', validateTaskCreation, createTask);
-// Usar el middleware antes de actualizar una tarea
-router.put('/tasks/:id', validateTaskUpdate, updateTask);
-
-// ✅ Proteger rutas de tareas
-router.post('/tasks', auth, createTask);
-router.put('/tasks/:id', auth, updateTask);
-router.delete('/tasks/:id', auth, deleteTask);
+// Combinar middleware de autenticación y validación en una sola ruta
+router.post('/', auth, validateTaskCreation, createTask);
+router.put('/:id', auth, validateTaskUpdate, updateTask);
+router.delete('/:id', auth, deleteTask);
 
 module.exports = router;
