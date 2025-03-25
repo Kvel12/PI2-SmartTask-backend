@@ -1,19 +1,26 @@
 const express = require('express');
-const { createTask, updateTask, deleteTask } = require('../controllers/taskController');
+const { createTask, getAllTasks, getTasksByProject, getTaskById, updateTask, deleteTask } = require('../controllers/taskController');
 const { validateTaskUpdate, validateTaskCreation } = require('../middleware/validation');
 const auth = require('../middleware/auth');
 
-
 const router = express.Router();
 
-// Usar el middleware antes de crear una tarea
-router.post('/tasks', validateTaskCreation, createTask);
-// Usar el middleware antes de actualizar una tarea
-router.put('/tasks/:id', validateTaskUpdate, updateTask);
+// Obtener todas las tareas
+router.get('/', auth, getAllTasks);
 
-// ✅ Proteger rutas de tareas
-router.post('/tasks', auth, createTask);
-router.put('/tasks/:id', auth, updateTask);
-router.delete('/tasks/:id', auth, deleteTask);
+// Obtener una tarea específica por ID
+router.get('/:id', auth, getTaskById);
+
+// Obtener todas las tareas de un proyecto específico
+router.get('/project/:projectId', auth, getTasksByProject);
+
+// Crear una nueva tarea
+router.post('/', auth, validateTaskCreation, createTask);
+
+// Actualizar una tarea existente
+router.put('/:id', auth, validateTaskUpdate, updateTask);
+
+// Eliminar una tarea
+router.delete('/:id', auth, deleteTask);
 
 module.exports = router;

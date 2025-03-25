@@ -1,4 +1,11 @@
-// Importación de la instancia de Sequelize configurada
+/**
+ * Sequelize instance for database connection.
+ * This instance is configured to interact with the database
+ * using the settings defined in the '../config/database' file.
+ *
+ * @type {import('sequelize').Sequelize}
+ */
+
 const sequelize = require('../config/database');
 
 // Importación de los modelos de la base de datos

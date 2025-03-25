@@ -2,7 +2,19 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-// Definición del modelo Task (Tarea)
+/**
+ * Represents a Task model in the database.
+ * 
+ * @typedef {Object} Task
+ * @property {number} id - The unique identifier for the task. Auto-incremented primary key.
+ * @property {string} title - The title of the task. Maximum length of 1000 characters. Cannot be null.
+ * @property {string|null} description - A detailed description of the task. Can be null.
+ * @property {Date} creation_date - The date when the task was created. Defaults to the current date and time.
+ * @property {Date} completion_date - The date when the task is expected to be completed. Cannot be null.
+ * @property {'in_progress'|'completed'|'pending'|'cancelled'} status - The current status of the task. Defaults to 'pending'.
+ * @property {number} projectId - The ID of the associated project. Cannot be null.
+ */
+
 const Task = sequelize.define('Task', {
   // ID único para cada tarea
   id: {
@@ -38,12 +50,18 @@ const Task = sequelize.define('Task', {
   
   // Estado de la tarea (pendiente, en progreso, completada o cancelada)
   status: {
-    type: DataTypes.ENUM('in_progress', 'completed', 'pending', 'cancelled'), // Valores permitidos
-    allowNull: false, // Obligatorio
-    defaultValue: 'pending' // Valor por defecto: pendiente
+    type: DataTypes.ENUM('in_progress', 'completed', 'pending', 'cancelled'),
+    allowNull: false,
+    defaultValue: 'pending'
+  },
+  projectId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    field: 'project_id'
   }
 }, {
-  timestamps: true // Agrega automáticamente campos createdAt y updatedAt
+  timestamps: true,
+  underscored: true
 });
 
 // Exportación del modelo para su uso en otras partes de la aplicación
