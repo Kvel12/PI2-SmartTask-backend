@@ -1,3 +1,11 @@
+/**
+ * Sequelize instance for database connection.
+ * This instance is configured to interact with the database
+ * using the settings defined in the '../config/database' file.
+ *
+ * @type {import('sequelize').Sequelize}
+ */
+
 const sequelize = require('../config/database');
 const User = require('./user');
 const Project = require('./project');
