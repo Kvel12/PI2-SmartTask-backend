@@ -31,32 +31,14 @@ if (!JWT_SECRET) {
 async function register(req, res) {
   try {
     const { username, password, name } = req.body;
-
-    // Validar datos obligatorios
-    if (!username || !password || !name) {
-      return res.status(400).json({ message: 'All fields are required.' });
-    }
-
-    // Verificar si el usuario ya existe
-    const existingUser = await User.findOne({ where: { username } });
-    if (existingUser) {
-      return res.status(409).json({ message: 'The username is already in use.' });
-    }
-
-    // Hashear la contraseña antes de guardarla
-    const hashedPassword = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
+    const hashedPassword = await bcrypt.hash(password, 10);
     const user = await User.create({ username, password: hashedPassword, name });
-
-    // Generar token con más información
-    const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-
-    // Loggear el registro del usuario
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '1h' });
     logger.info(`User registered: ${user.id}`);
-    res.status(201).json({ message: 'User registered successfully.', token });
+    res.status(201).json({ token });
   } catch (error) {
     logger.error('Error registering user', error);
-    console.error(error);
-    res.status(500).json({ message: 'Error registering user.' });
+    res.status(500).json({ message: 'Error registering user' });
   }
 }
 
