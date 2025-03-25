@@ -31,14 +31,32 @@ if (!JWT_SECRET) {
 async function register(req, res) {
   try {
     const { username, password, name } = req.body;
-    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Validar datos obligatorios
+    if (!username || !password || !name) {
+      return res.status(400).json({ message: 'All fields are required.' });
+    }
+
+    // Verificar si el usuario ya existe
+    const existingUser = await User.findOne({ where: { username } });
+    if (existingUser) {
+      return res.status(409).json({ message: 'The username is already in use.' });
+    }
+
+    // Hashear la contraseña antes de guardarla
+    const hashedPassword = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
     const user = await User.create({ username, password: hashedPassword, name });
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '1h' });
+
+    // Generar token con más información
+    const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+
+    // Loggear el registro del usuario
     logger.info(`User registered: ${user.id}`);
-    res.status(201).json({ token });
+    res.status(201).json({ message: 'User registered successfully.', token });
   } catch (error) {
     logger.error('Error registering user', error);
-    res.status(500).json({ message: 'Error registering user' });
+    console.error(error);
+    res.status(500).json({ message: 'Error registering user.' });
   }
 }
 
@@ -59,16 +77,99 @@ async function register(req, res) {
 async function login(req, res) {
   try {
     const { username, password } = req.body;
-    const user = await User.findOne({ where: { username } });
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+
+    // Validación detallada de entrada
+    if (!username || !password) {
+      return res.status(400).json({ 
+        error: 'VALIDATION_ERROR',
+        message: 'Username and password are required.',
+        details: {
+          username: username ? 'Provided' : 'Missing',
+          password: password ? 'Provided' : 'Missing'
+        }
+      });
     }
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '1h' });
-    logger.info(`User logged in: ${user.id}`);
-    res.status(200).json({ token });
+
+    // Buscar usuario en la base de datos
+    const user = await User.findOne({ where: { username } });
+    if (!user) {
+      return res.status(401).json({ 
+        error: 'AUTH_ERROR',
+        message: 'User not found.',
+        details: { username }
+      });
+    }
+
+    // Comparación de contraseña con más detalles
+    let isMatch = false;
+    try {
+      isMatch = await bcrypt.compare(password, user.password);
+    } catch (compareError) {
+      return res.status(500).json({
+        error: 'BCRYPT_ERROR',
+        message: 'Error during password comparison.',
+        details: compareError.message
+      });
+    }
+    
+    // Verificación de contraseña
+    if (!isMatch) {
+      return res.status(401).json({ 
+        error: 'AUTH_ERROR',
+        message: 'Invalid credentials.',
+        details: { 
+          usernameFound: !!user,
+          passwordMatch: isMatch
+        }
+      });
+    }
+
+    // Verificación de JWT_SECRET
+    if (!JWT_SECRET) {
+      return res.status(500).json({
+        error: 'CONFIG_ERROR',
+        message: 'JWT Secret is not configured.'
+      });
+    }
+
+    // Generar token con más información de depuración
+    const token = jwt.sign(
+      { 
+        userId: user.id, 
+        username: user.username,
+        debugInfo: {
+          tokenGeneratedAt: new Date().toISOString(),
+          saltRounds: BCRYPT_SALT_ROUNDS
+        }
+      },
+      JWT_SECRET,
+      { 
+        expiresIn: JWT_EXPIRES_IN,
+        algorithm: 'HS256' // Especificar explícitamente el algoritmo
+      }
+    );
+
+    // Respuesta exitosa con más detalles
+    res.status(200).json({ 
+      message: 'Login successful.',
+      user: {
+        id: user.id,
+        username: user.username
+      },
+      token,
+      debugInfo: {
+        tokenExpiresIn: JWT_EXPIRES_IN,
+        tokenGeneratedAt: new Date().toISOString()
+      }
+    });
   } catch (error) {
-    logger.error('Error logging in', error);
-    res.status(500).json({ message: 'Error logging in' });
+    // Respuesta de error detallada
+    res.status(500).json({ 
+      error: 'SERVER_ERROR',
+      message: 'Error logging in.',
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 }
 
