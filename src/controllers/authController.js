@@ -50,63 +50,82 @@ async function login(req, res) {
   try {
     const { username, password } = req.body;
 
-    // Debugging: Log the received credentials
-    console.log('Login attempt:', { username, password });
+    // Log more detailed debugging information
+    console.error(`Login attempt for username: ${username}`);
+    console.error(`Input password length: ${password.length}`);
 
+    // Buscar usuario en la base de datos
     const user = await User.findOne({ where: { username } });
     if (!user) {
+      console.error(`User not found: ${username}`);
       return res.status(401).json({ 
         error: 'AUTH_ERROR',
-        message: 'User not found.'
+        message: 'User not found.',
+        details: { username }
       });
     }
 
-    // Debugging: Log the stored hashed password
-    console.log('Stored hashed password:', user.password);
+    // Log additional user details for debugging
+    console.error(`User found: ${user.username}`);
+    console.error(`Stored password hash length: ${user.password.length}`);
 
+    // Comparación de contraseña con más detalles
+    let isMatch = false;
     try {
-      // Verbose logging of password comparison
-      const isMatch = await bcrypt.compare(password, user.password);
-      console.log('Password comparison result:', isMatch);
-
-      if (!isMatch) {
-        return res.status(401).json({ 
-          error: 'AUTH_ERROR',
-          message: 'Invalid credentials.',
-          details: { 
-            storedPasswordLength: user.password.length,
-            inputPasswordLength: password.length
-          }
-        });
-      }
-
-      // Rest of the login logic remains the same
-      const token = jwt.sign(
-        { 
-          userId: user.id, 
-          username: user.username
-        },
-        process.env.JWT_SECRET,
-        { 
-          expiresIn: JWT_EXPIRES_IN
-        }
-      );
-
-      res.status(200).json({ 
-        message: 'Login successful.',
-        token
-      });
-
+      // Agregar más información de depuración
+      console.error('Attempting password comparison');
+      
+      isMatch = await bcrypt.compare(password, user.password);
+      
+      console.error(`Password comparison result: ${isMatch}`);
     } catch (compareError) {
-      console.error('Bcrypt comparison error:', compareError);
+      console.error('Error during password comparison:', compareError);
       return res.status(500).json({
         error: 'BCRYPT_ERROR',
         message: 'Error during password comparison.',
-        details: compareError.message
+        details: {
+          errorMessage: compareError.message,
+          errorStack: compareError.stack
+        }
       });
     }
+    
+    // Verificación de contraseña
+    if (!isMatch) {
+      console.error('Password does not match');
+      return res.status(401).json({ 
+        error: 'AUTH_ERROR',
+        message: 'Invalid credentials.',
+        details: { 
+          usernameFound: !!user,
+          passwordMatch: isMatch,
+          storedPasswordLength: user.password.length,
+          inputPasswordLength: password.length
+        }
+      });
+    }
+
+    // Generar token
+    const token = jwt.sign(
+      { 
+        userId: user.id, 
+        username: user.username
+      },
+      process.env.JWT_SECRET,
+      { 
+        expiresIn: JWT_EXPIRES_IN,
+        algorithm: 'HS256'
+      }
+    );
+
+    // Respuesta exitosa
+    res.status(200).json({ 
+      message: 'Login successful.',
+      token
+    });
+
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('Unexpected login error:', error);
     res.status(500).json({ 
       error: 'SERVER_ERROR',
       message: 'Error logging in.',
