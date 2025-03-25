@@ -3,6 +3,24 @@ const Task = require('../models/task');
 const Project = require('../models/project');
 const logger = require('../logger');
 
+/**
+ * Creates a new task associated with a specific project.
+ *
+ * @async
+ * @function createTask
+ * @param {Object} req - The request object.
+ * @param {Object} req.body - The body of the request containing task details.
+ * @param {string} req.body.title - The title of the task.
+ * @param {string} req.body.description - The description of the task.
+ * @param {string} req.body.creation_date - The creation date of the task.
+ * @param {string} req.body.completion_date - The completion date of the task.
+ * @param {string} req.body.status - The status of the task.
+ * @param {number} req.body.projectId - The ID of the project the task belongs to.
+ * @param {Object} res - The response object.
+ * @returns {Promise<void>} Sends a JSON response with the created task or an error message.
+ * @throws {Error} Returns a 400 status if validation errors exist, a 404 status if the project is not found, 
+ * or a 500 status if an internal server error occurs.
+ */
 async function createTask(req, res) {
   try {
     // Verificar errores de validación
@@ -37,6 +55,17 @@ async function createTask(req, res) {
   }
 }
 
+/**
+ * Retrieves all tasks from the database, including their associated projects.
+ * The tasks are ordered by their creation date in descending order.
+ *
+ * @async
+ * @function getAllTasks
+ * @param {Object} req - The request object.
+ * @param {Object} res - The response object.
+ * @returns {Promise<void>} Sends a JSON response with the list of tasks or an error message.
+ * @throws {Error} If an error occurs while retrieving tasks, a 500 status code is returned.
+ */
 async function getAllTasks(req, res) {
   try {
     const tasks = await Task.findAll({
@@ -57,6 +86,20 @@ async function getAllTasks(req, res) {
   }
 }
 
+/**
+ * Retrieves all tasks associated with a specific project.
+ *
+ * @async
+ * @function getTasksByProject
+ * @param {Object} req - The request object.
+ * @param {Object} req.params - The parameters from the request.
+ * @param {string} req.params.projectId - The ID of the project to retrieve tasks for.
+ * @param {Object} res - The response object.
+ * @returns {Promise<void>} Sends a JSON response with the list of tasks or an error message.
+ *
+ * @throws {Error} Returns a 404 status if the project is not found.
+ * @throws {Error} Returns a 500 status if there is an error retrieving the tasks.
+ */
 async function getTasksByProject(req, res) {
   try {
     const { projectId } = req.params;
@@ -81,6 +124,19 @@ async function getTasksByProject(req, res) {
   }
 }
 
+/**
+ * Retrieves a task by its ID, including its associated project details.
+ *
+ * @async
+ * @function getTaskById
+ * @param {Object} req - The request object.
+ * @param {Object} req.params - The parameters from the request.
+ * @param {string} req.params.id - The ID of the task to retrieve.
+ * @param {Object} res - The response object.
+ * @returns {Promise<void>} Sends a JSON response with the task data or an error message.
+ *
+ * @throws {Error} If an error occurs while retrieving the task, a 500 status code is returned.
+ */
 async function getTaskById(req, res) {
   try {
     const { id } = req.params;
@@ -106,6 +162,27 @@ async function getTaskById(req, res) {
   }
 }
 
+/**
+ * Updates an existing task with the provided data.
+ *
+ * @async
+ * @function updateTask
+ * @param {Object} req - The request object.
+ * @param {Object} req.params - The request parameters.
+ * @param {string} req.params.id - The ID of the task to update.
+ * @param {Object} req.body - The request body containing task data.
+ * @param {string} [req.body.title] - The new title of the task.
+ * @param {string} [req.body.description] - The new description of the task.
+ * @param {string} [req.body.creation_date] - The new creation date of the task.
+ * @param {string} [req.body.completion_date] - The new completion date of the task.
+ * @param {string} [req.body.status] - The new status of the task.
+ * @param {string} [req.body.projectId] - The ID of the new project to associate with the task.
+ * @param {Object} res - The response object.
+ * @returns {Promise<void>} Sends a JSON response with the updated task or an error message.
+ * @throws {Error} Returns a 400 status if validation errors occur.
+ * @throws {Error} Returns a 404 status if the task or project is not found.
+ * @throws {Error} Returns a 500 status if an internal server error occurs.
+ */
 async function updateTask(req, res) {
   try {
     // Verificar errores de validación
@@ -148,6 +225,23 @@ async function updateTask(req, res) {
   }
 }
 
+/**
+ * Deletes a task by its ID.
+ *
+ * @async
+ * @function deleteTask
+ * @param {Object} req - The request object.
+ * @param {Object} req.params - The parameters from the request.
+ * @param {string} req.params.id - The ID of the task to delete.
+ * @param {Object} res - The response object.
+ * @returns {void}
+ * @throws {Error} If an error occurs during the deletion process.
+ *
+ * @description
+ * This function retrieves a task by its ID from the database. If the task exists, it deletes the task
+ * and sends a 204 No Content response. If the task does not exist, it sends a 404 Not Found response.
+ * In case of an error during the process, it logs the error and sends a 500 Internal Server Error response.
+ */
 async function deleteTask(req, res) {
   try {
     const { id } = req.params;

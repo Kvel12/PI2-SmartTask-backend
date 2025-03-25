@@ -29,6 +29,22 @@ const validateProjectCreation = [
     }
 ];
 
+/**
+ * Middleware array to validate and handle errors for project update requests.
+ * 
+ * Validation rules:
+ * - `title` (optional):
+ *   - Must not be empty if provided.
+ *   - Must be a string.
+ * - `description` (optional):
+ *   - Must not be empty if provided.
+ *   - Must be a string.
+ * 
+ * If validation fails, a 400 status response is sent with the validation errors.
+ * Otherwise, the request proceeds to the next middleware or route handler.
+ * 
+ * @type {Array<import('express').RequestHandler>}
+ */
 const validateProjectUpdate = [
     // Validar el campo 'tittle'
     body('title')
@@ -53,6 +69,31 @@ const validateProjectUpdate = [
     }
 ];
 
+/**
+ * Middleware array for validating task creation requests.
+ * 
+ * This middleware performs the following validations:
+ * 1. Ensures the task title (`title`) is not empty.
+ * 2. Ensures the creation date (`creation_date`) is not empty and follows the ISO 8601 format.
+ * 3. Ensures the completion date (`completion_date`) is not empty, follows the ISO 8601 format, 
+ *    and is later than the creation date.
+ * 4. Handles validation errors by returning a 400 status code with the list of errors if any validation fails.
+ * 
+ * @type {Array<import('express').RequestHandler>}
+ * 
+ * @throws {Error} If the `completion_date` is earlier than or equal to the `creation_date`.
+ * 
+ * @example
+ * // Example usage in an Express route
+ * const express = require('express');
+ * const { validateTaskCreation } = require('./middleware/validation');
+ * 
+ * const app = express();
+ * 
+ * app.post('/tasks', validateTaskCreation, (req, res) => {
+ *     res.status(201).send('Task created successfully');
+ * });
+ */
 const validateTaskCreation= [    // Validar que el título de la tarea no esté vacío
     body('title')
         .notEmpty().withMessage('The task title is required'), // Verifica que el título no esté vacío
@@ -84,6 +125,18 @@ const validateTaskCreation= [    // Validar que el título de la tarea no esté 
     }
 ];
 
+/**
+ * Middleware array to validate and handle errors for task update requests.
+ * 
+ * Validations:
+ * - `title` (optional): Must be a non-empty string if provided.
+ * - `creation_date` (optional): Must be in a valid ISO 8601 date format if provided.
+ * - `completion_date` (optional): Must be in a valid ISO 8601 date format and later than `creation_date` if both are provided.
+ * 
+ * If validation fails, a 400 status code is returned with the validation errors.
+ * 
+ * @type {Array<import('express').RequestHandler>}
+ */
 const validateTaskUpdate = [
     // Validar que el título, si está presente, no esté vacío y sea una cadena de texto
     body('title')

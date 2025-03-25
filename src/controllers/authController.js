@@ -14,6 +14,21 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
+/**
+ * Handles user registration by validating input, checking for existing users,
+ * hashing the password, creating a new user, and generating a JWT token.
+ *
+ * @async
+ * @function register
+ * @param {Object} req - The request object.
+ * @param {Object} req.body - The body of the request containing user data.
+ * @param {string} req.body.username - The username of the user.
+ * @param {string} req.body.password - The password of the user.
+ * @param {string} req.body.name - The name of the user.
+ * @param {Object} res - The response object.
+ * @returns {Promise<void>} Sends a JSON response with a success message and token
+ * if registration is successful, or an error message if it fails.
+ */
 async function register(req, res) {
   try {
     const { username, password, name } = req.body;
@@ -46,6 +61,28 @@ async function register(req, res) {
   }
 }
 
+/**
+ * Handles user login by validating credentials and generating a JWT token.
+ *
+ * @async
+ * @function login
+ * @param {Object} req - The HTTP request object.
+ * @param {Object} req.body - The body of the request containing login credentials.
+ * @param {string} req.body.username - The username provided by the user.
+ * @param {string} req.body.password - The password provided by the user.
+ * @param {Object} res - The HTTP response object.
+ * @returns {void} Sends a JSON response with the login result.
+ *
+ * @throws {Error} If an unexpected error occurs during the login process.
+ *
+ * @description
+ * This function performs the following steps:
+ * 1. Extracts the username and password from the request body.
+ * 2. Searches for the user in the database using the provided username.
+ * 3. Validates the provided password against the stored password hash.
+ * 4. If the credentials are valid, generates a JWT token and sends it in the response.
+ * 5. Handles and logs errors at various stages, returning appropriate HTTP status codes and error messages.
+ */
 async function login(req, res) {
   try {
     const { username, password } = req.body;
@@ -135,6 +172,15 @@ async function login(req, res) {
 }
 
 
+/**
+ * Handles the user logout process.
+ * Sends a success response if the logout is completed successfully,
+ * or an error response if an issue occurs during the process.
+ *
+ * @param {Object} req - The HTTP request object.
+ * @param {Object} res - The HTTP response object.
+ * @returns {void}
+ */
 function logout(req, res) {
   try {
     res.status(200).json({ message: "Logout successful." });
