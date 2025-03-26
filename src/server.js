@@ -46,19 +46,6 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'x-auth-token', 'Authorization']
 }));
 
-// Definición de rutas de la API
-app.use('/api/auth', authRoutes); // Rutas de autenticación
-app.use('/api/projects', authMiddleware, projectRoutes); // Rutas protegidas de proyectos
-app.use('/api/tasks', authMiddleware, taskRoutes); // Rutas protegidas de tareas
-
-// Sirve archivos estáticos de React (para el frontend en producción)
-app.use(express.static(path.join(__dirname, 'build')));
-
-// Manejo de rutas desconocidas: devuelve el archivo index.html del frontend
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../build', 'index.html'));
-});
-
 app.get('/api/debug', (req, res) => {
   res.json({
     message: 'API está funcionando',
@@ -68,7 +55,18 @@ app.get('/api/debug', (req, res) => {
   });
 });
 
-// Middleware para manejar errores y registrar logs con Winston
+app.use('/api/auth', authRoutes);
+app.use('/api/projects', authMiddleware, projectRoutes);
+app.use('/api/tasks', authMiddleware, taskRoutes);
+
+// Servir archivos estáticos desde la carpeta build
+app.use(express.static(path.join(__dirname, '..', 'build')));
+
+// Cualquier otra ruta no definida, enviar el archivo HTML de React
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'build', 'index.html'));
+});
+
 app.use((err, req, res, next) => {
   winston.error(err.message, err);
   res.status(err.status || 500).json({
