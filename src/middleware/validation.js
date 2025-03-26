@@ -84,7 +84,6 @@ const validateProjectUpdate = [
  * @throws {Error} If the `completion_date` is earlier than or equal to the `creation_date`.
  * 
  * @example
- * // Example usage in an Express route
  * const express = require('express');
  * const { validateTaskCreation } = require('./middleware/validation');
  * 

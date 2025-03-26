@@ -25,22 +25,25 @@ app.use(bodyParser.json()); // Habilita el parsing de JSON en las solicitudes
 // Configuración de CORS mejorada que acepta el dominio con y sin barra final
 app.use(cors({
   origin: function(origin, callback) {
-    const allowedOrigins = [
-      'https://pi2-smarttask-frontend.vercel.app',
-      'https://pi2-smarttask-frontend.vercel.app/'
-    ];
-    
-    // Permitir solicitudes sin origen (como las de Postman o desarrollo local)
+    // Permitir solicitudes sin origen (como Postman, desarrollo local)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    // Lista de dominios permitidos
+    const allowedOrigins = [
+      'https://pi2-smarttask-frontend.onrender.com',  // Frontend en Render
+      'https://pi2-smarttask-frontend.vercel.app',    // Frontend en Vercel
+      process.env.FRONTEND_URL || '*'                 // De las variables de entorno
+    ];
+    
+    // Verificar si el origen está permitido
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
       callback(null, true);
     } else {
       callback(new Error('No permitido por CORS'));
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'x-auth-token']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'x-auth-token', 'Authorization']
 }));
 
 // Definición de rutas de la API
@@ -53,7 +56,16 @@ app.use(express.static(path.join(__dirname, 'build')));
 
 // Manejo de rutas desconocidas: devuelve el archivo index.html del frontend
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'build', 'index.html'));
+  res.sendFile(path.join(__dirname, '../build', 'index.html'));
+});
+
+app.get('/api/debug', (req, res) => {
+  res.json({
+    message: 'API está funcionando',
+    environment: process.env.NODE_ENV,
+    frontendUrl: process.env.FRONTEND_URL,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Middleware para manejar errores y registrar logs con Winston
