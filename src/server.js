@@ -21,10 +21,26 @@ const PORT = process.env.PORT || 10000; // Puerto en el que correrá el servidor
 
 // Configuración de middleware
 app.use(bodyParser.json()); // Habilita el parsing de JSON en las solicitudes
+
+// Configuración de CORS mejorada que acepta el dominio con y sin barra final
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*', // Permite solicitudes desde cualquier origen en desarrollo
-  methods: ['GET', 'POST', 'PUT', 'DELETE'], // Métodos HTTP permitidos
-  allowedHeaders: ['Content-Type', 'x-auth-token'] // Encabezados permitidos
+  origin: function(origin, callback) {
+    const allowedOrigins = [
+      'https://pi2-smarttask-frontend.vercel.app',
+      'https://pi2-smarttask-frontend.vercel.app/'
+    ];
+    
+    // Permitir solicitudes sin origen (como las de Postman o desarrollo local)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('No permitido por CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'x-auth-token']
 }));
 
 // Definición de rutas de la API
