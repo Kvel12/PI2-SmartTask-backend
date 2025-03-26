@@ -17,9 +17,26 @@ const PORT = process.env.PORT || 10000;
 
 app.use(bodyParser.json());
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*', // Usa * para permitir cualquier origen en desarrollo
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'x-auth-token']
+  origin: function(origin, callback) {
+    // Permitir solicitudes sin origen (como Postman, desarrollo local)
+    if (!origin) return callback(null, true);
+    
+    // Lista de dominios permitidos
+    const allowedOrigins = [
+      'https://pi2-smarttask-frontend.onrender.com',  // Frontend en Render
+      'https://pi2-smarttask-frontend.vercel.app',    // Frontend en Vercel
+      process.env.FRONTEND_URL || '*'                 // De las variables de entorno
+    ];
+    
+    // Verificar si el origen está permitido
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      callback(null, true);
+    } else {
+      callback(new Error('No permitido por CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'x-auth-token', 'Authorization']
 }));
 
 app.use('/api/auth', authRoutes);
@@ -31,7 +48,16 @@ app.use(express.static(path.join(__dirname, 'build')));
 
 // Maneja cualquier solicitud que no coincida con las rutas anteriores
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'build', 'index.html'));
+  res.sendFile(path.join(__dirname, '../build', 'index.html'));
+});
+
+app.get('/api/debug', (req, res) => {
+  res.json({
+    message: 'API está funcionando',
+    environment: process.env.NODE_ENV,
+    frontendUrl: process.env.FRONTEND_URL,
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.use((err, req, res, next) => {
