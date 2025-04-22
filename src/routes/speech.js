@@ -11,6 +11,21 @@ const auth = require('../middleware/auth');
 const { Task, Project } = require('../models');
 const { Op } = require('sequelize');
 
+const winston = require('winston');
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'combined.log' })
+  ]
+});
+
+
 // Configuración de multer para manejar archivos de audio
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -45,7 +60,6 @@ const upload = multer({
   }
 });
 
-/// Configurar el cliente de Google Speech-to-Text
 // Configurar el cliente de Google Speech-to-Text
 let speechClient;
 try {
@@ -56,26 +70,41 @@ try {
   console.error('Error al configurar Google Speech-to-Text:', error);
 }
 
-// Configurar el cliente de OpenAI (free-tier o modelo de bajo costo)
 let openai;
 try {
-  openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
+  if (process.env.OPENAI_API_KEY) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+    logger.info('Cliente OpenAI inicializado correctamente');
+  } else {
+    logger.error('Variable de entorno OPENAI_API_KEY no configurada');
+  }
 } catch (error) {
-  console.error('Error al configurar OpenAI:', error);
+  logger.error('Error al configurar OpenAI:', error);
 }
 
 // Endpoint para convertir audio a texto
 router.post('/speech-to-text', auth, upload.single('audio'), async (req, res) => {
   try {
+    logger.info('Iniciando procesamiento de audio a texto');
+    
     if (!speechClient) {
+      logger.error('Google Speech-to-Text no está configurado correctamente');
       return res.status(500).json({ error: 'Google Speech-to-Text no está configurado correctamente' });
     }
 
     if (!req.file) {
+      logger.error('No se recibió ningún archivo de audio');
       return res.status(400).json({ error: 'No se recibió ningún archivo de audio' });
     }
+
+    logger.info('Archivo recibido:', {
+      fileName: req.file.filename,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      path: req.file.path
+    });
 
     // Leer el archivo de audio
     const audioBytes = fs.readFileSync(req.file.path).toString('base64');
@@ -123,11 +152,15 @@ router.post('/speech-to-text', auth, upload.single('audio'), async (req, res) =>
 
     res.json({ success: true, transcription });
   } catch (error) {
-    console.error('Error en speech-to-text:', error);
+    logger.error('Error en speech-to-text:', error);
     
     // Limpiar el archivo en caso de error
     if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (unlinkError) {
+        logger.error('Error al eliminar archivo temporal:', unlinkError);
+      }
     }
     
     res.status(500).json({ 
@@ -203,6 +236,7 @@ async function detectCommandType(transcription) {
           content: `Analiza esta transcripción: "${transcription}" y clasifícala en una de estas categorías: "createTask" (si está solicitando crear una tarea), "searchTask" (si está buscando tareas), "updateTask" (si está actualizando una tarea existente), "assistance" (si está pidiendo ayuda o información general). Responde solo con el tipo, sin explicación.` 
         }
       ],
+      max_tokens: 20,
       temperature: 0.3,
     });
 
