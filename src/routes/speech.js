@@ -258,6 +258,97 @@ router.post('/process-voice-command', auth, async (req, res) => {
   }
 });
 
+// Endpoint para procesar texto transcrito directamente (sin audio)
+router.post('/process-voice-text', auth, async (req, res) => {
+    const { transcription, commandType, projectId } = req.body;
+    
+    if (!transcription) {
+      return res.status(400).json({ error: 'La transcripción es requerida' });
+    }
+  
+    try {
+      logger.info(`Procesando transcripción de voz: "${transcription}"`);
+      
+      // Obtener información de proyectos y tareas para enviar como contexto al LLM
+      let projectsContext = [];
+      let tasksContext = [];
+      
+      try {
+        // Obtener proyectos del usuario para dar contexto al LLM
+        const userId = req.user.userId;
+        const projects = await Project.findAll({ where: { userId } });
+        
+        projectsContext = projects.map(p => ({
+          id: p.id,
+          title: p.title,
+          priority: p.priority,
+          culmination_date: p.culmination_date
+        }));
+        
+        // Si hay un proyecto específico, obtener sus tareas
+        if (projectId) {
+          const tasks = await Task.findAll({ where: { projectId } });
+          tasksContext = tasks.map(t => ({
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            completion_date: t.completion_date
+          }));
+        }
+      } catch (error) {
+        logger.warn(`Error al obtener contexto para LLM: ${error.message}`);
+        // Continuamos sin contexto si hay un error
+      }
+      
+      // Preprocesar la transcripción para detectar el tipo de comando
+      let detectedCommandType = commandType;
+      
+      if (!detectedCommandType) {
+        // Si no se especificó un tipo de comando, intentar detectarlo automáticamente
+        try {
+          detectedCommandType = await detectCommandType(transcription);
+          logger.info(`Tipo de comando detectado: ${detectedCommandType}`);
+        } catch (error) {
+          logger.error(`Error al detectar tipo de comando: ${error.message}`);
+          detectedCommandType = 'assistance';
+        }
+      }
+      
+      // Generar respuesta según el tipo de comando detectado
+      let response;
+      
+      switch (detectedCommandType) {
+        case 'createTask':
+          response = await processCreateTaskCommand(transcription, projectId, projectsContext);
+          break;
+        case 'createProject':
+          response = await processCreateProjectCommand(transcription, projectsContext);
+          break;
+        case 'searchTask':
+          response = await processSearchTaskCommand(transcription, projectsContext, tasksContext);
+          break;
+        case 'updateTask':
+          response = await processUpdateTaskCommand(transcription, projectsContext, tasksContext);
+          break;
+        case 'assistance':
+        default:
+          response = await processAssistanceCommand(transcription, projectsContext, tasksContext);
+          break;
+      }
+      
+      logger.info(`Respuesta generada para comando de voz`);
+      res.json(response);
+    } catch (error) {
+      logger.error(`Error al procesar texto de voz: ${error.message}`, error);
+      res.status(500).json({ 
+        success: false,
+        error: 'Error al procesar el texto de voz',
+        details: error.message 
+      });
+    }
+  });
+
+
 // Función para procesar comandos mediante palabras clave (alternativa cuando OpenAI no está disponible)
 async function processWithKeywords(transcription, commandType, projectId, res) {
   const lowercaseTranscription = transcription.toLowerCase();
@@ -713,10 +804,24 @@ async function processUpdateTaskCommand(transcription) {
 }
 
 // Procesar un comando de asistencia general
-async function processAssistanceCommand(transcription) {
+// Procesar un comando de asistencia general con información contextual
+async function processAssistanceCommand(transcription, projectsContext = [], tasksContext = []) {
   try {
     if (!openai) {
       throw new Error('Cliente OpenAI no inicializado');
+    }
+
+    // Crear un prompt con contexto
+    let contextPrompt = '';
+    
+    if (projectsContext.length > 0) {
+      contextPrompt += `\nInformación de proyectos del usuario:
+${JSON.stringify(projectsContext, null, 2)}`;
+    }
+    
+    if (tasksContext.length > 0) {
+      contextPrompt += `\nInformación de tareas:
+${JSON.stringify(tasksContext, null, 2)}`;
     }
 
     // Usar LLM para generar una respuesta de asistencia
@@ -735,6 +840,8 @@ async function processAssistanceCommand(transcription) {
           - Las tareas tienen título, descripción, estado y fecha límite
           - Estados de tarea: pendiente, en progreso, completada, cancelada
           - Visualización de estadísticas en un dashboard
+          
+          ${contextPrompt}
           
           Mantén tus respuestas concisas, útiles y enfocadas en ayudar al usuario con su sistema de gestión de tareas.` 
         },
