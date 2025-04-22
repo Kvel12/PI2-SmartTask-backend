@@ -97,18 +97,21 @@ try {
 
 // Endpoint para convertir audio a texto
 router.post('/speech-to-text', auth, upload.single('audio'), async (req, res) => {
-  try {
+    try {
     logger.info('Iniciando procesamiento de audio a texto');
-    
+    logger.info(`Headers recibidos: ${JSON.stringify(req.headers)}`);
+        
     if (!speechClient) {
-      logger.error('Google Speech-to-Text no está configurado correctamente');
-      return res.status(500).json({ error: 'Google Speech-to-Text no está configurado correctamente' });
+        logger.error('Google Speech-to-Text no está configurado correctamente');
+        return res.status(500).json({ error: 'Google Speech-to-Text no está configurado correctamente' });
+    }
+    
+    if (!req.file) {
+        logger.error('No se recibió ningún archivo de audio');
+        return res.status(400).json({ error: 'No se recibió ningún archivo de audio' });
     }
 
-    if (!req.file) {
-      logger.error('No se recibió ningún archivo de audio');
-      return res.status(400).json({ error: 'No se recibió ningún archivo de audio' });
-    }
+    logger.info(`Archivo recibido: ${req.file.filename}, tipo: ${req.file.mimetype}, tamaño: ${req.file.size} bytes`);
 
     logger.info(`Archivo recibido: ${req.file.filename}, tipo: ${req.file.mimetype}, tamaño: ${req.file.size} bytes`);
 
@@ -172,7 +175,7 @@ router.post('/speech-to-text', auth, upload.single('audio'), async (req, res) =>
 
     res.json({ success: true, transcription });
   } catch (error) {
-    logger.error(`Error en speech-to-text: ${error.message}`, error);
+    logger.error(`Error detallado en speech-to-text: ${error.stack}`);
     
     // Limpiar el archivo en caso de error
     if (req.file && fs.existsSync(req.file.path)) {
