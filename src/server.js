@@ -11,6 +11,7 @@ const sequelize = models.sequelize;
 const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
 const taskRoutes = require('./routes/tasks');
+const speechRoutes = require('./routes/speech'); // Nueva importación para rutas de reconocimiento de voz
 const authMiddleware = require('./middleware/auth');
 
 // Carga variables de entorno desde un archivo .env
@@ -58,6 +59,7 @@ app.get('/api/debug', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', authMiddleware, projectRoutes);
 app.use('/api/tasks', authMiddleware, taskRoutes);
+app.use('/api/speech', authMiddleware, speechRoutes);
 
 // Servir archivos estáticos desde la carpeta build
 app.use(express.static(path.join(__dirname, '..', 'build')));
