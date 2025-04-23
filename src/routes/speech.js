@@ -229,7 +229,7 @@ router.post('/process-voice-text', auth, async (req, res) => {
       const searchTaskRegex = /\b(buscar|encontrar|mostrar|listar|ver)\s+(las\s+)?(tareas?|actividades)\b/i;
       const searchProjectRegex = /\b(buscar|encontrar|mostrar|listar|ver)\s+(los\s+)?(proyectos?)\b/i;
       const updateTaskRegex = /\b(actualizar|modificar|cambiar|marcar|editar|cambia)\s+(la\s+)?(tarea|actividad|estatus|estado)\b/i;
-      const updateProjectRegex = /\b(actualizar|modificar|cambiar|editar|cambia)\s+(el\s+)?(proyecto|prioridad|probabilidad)\b/i;
+      const updateProjectRegex = /\b(actualizar|modificar|cambiar|editar|cambia|modifica|actualiza)\s+(el\s+)?(proyecto|prioridad|probabilidad|título|titulo|nombre|fecha)\b/i;
       const countTasksRegex = /\b(cuantas|cuántas|numero|número|total\s+de)\s+(tareas|actividades)\b/i;
       const countProjectsRegex = /\b(cuantos|cuántos|numero|número|total\s+de)\s+(proyectos)\b/i;
       
@@ -294,7 +294,15 @@ router.post('/process-voice-text', auth, async (req, res) => {
             detectedCommandType = 'updateProject';
             logger.info('Command type detected via keywords: updateProject');
           }
-        } else if (normalizedText.includes('cuantas') && normalizedText.includes('tareas')) {
+        } // Añadir este patrón adicional para comandos relacionados con el sistema
+        else if (normalizedText.includes('sistema') && 
+            (normalizedText.includes('tareas') || normalizedText.includes('proyectos'))) {
+            if (normalizedText.includes('tareas')) {
+                detectedCommandType = 'countTasks';
+            } else if (normalizedText.includes('proyectos')) {
+                detectedCommandType = 'countProjects';
+            }
+        }else if (normalizedText.includes('cuantas') && normalizedText.includes('tareas')) {
           detectedCommandType = 'countTasks';
           logger.info('Command type detected via keywords: countTasks');
         } else if (normalizedText.includes('cuantos') && normalizedText.includes('proyectos')) {
@@ -1604,205 +1612,259 @@ async function processUpdateTaskCommand(transcription, projects = []) {
   }
 }
 
-// Procesador para actualizar proyectos - NUEVO
+// Procesador para actualizar proyectos - MEJORADO
 async function processUpdateProjectCommand(transcription) {
-  logger.info(`Processing update project command: "${transcription}"`);
-  
-  try {
-    // Extraer detalles de la actualización
-    let projectIdentifier = null;
-    let updates = {};
+    logger.info(`Processing update project command: "${transcription}"`);
     
-    // Intentar extraer el nombre del proyecto
-    const projectMention = transcription.match(/(?:proyecto|plan|actualizar|cambiar|modificar|editar)\s+(?:el\s+)?(?:proyecto\s+)?["']?([^"'.,]+)["']?/i);
-    if (projectMention && projectMention[1]) {
-      projectIdentifier = projectMention[1].trim();
-      logger.info(`Identificador de proyecto extraído: ${projectIdentifier}`);
-    }
-    
-    // Si no se encontró, buscar después de "del proyecto"
-    if (!projectIdentifier) {
-      const afterDelMatch = transcription.match(/del\s+proyecto\s+["']?([^"'.,]+)["']?/i);
-      if (afterDelMatch && afterDelMatch[1]) {
-        projectIdentifier = afterDelMatch[1].trim();
-        logger.info(`Identificador de proyecto extraído después de "del proyecto": ${projectIdentifier}`);
-      }
-    }
-    
-    if (!projectIdentifier) {
-      logger.error('No se encontró identificador de proyecto en el comando');
-      return {
-        success: false,
-        response: 'No pude identificar qué proyecto deseas actualizar. Por favor, menciona el nombre o ID del proyecto que quieres modificar.'
-      };
-    }
-    
-    // Extraer los campos a actualizar
-    const lowercaseText = transcription.toLowerCase();
-    
-    // Detectar cambio de prioridad
-    if (lowercaseText.includes('prioridad') || lowercaseText.includes('probabilidad')) {
-      if (lowercaseText.includes('alta') || lowercaseText.includes('urgente')) {
-        updates.priority = 'high';
-      } else if (lowercaseText.includes('baja')) {
-        updates.priority = 'low';
-      } else if (lowercaseText.includes('media') || lowercaseText.includes('medio') || 
-                lowercaseText.includes('normal')) {
-        updates.priority = 'medium';
-      }
-    }
-    
-    // Detectar cambio de título
-    if (lowercaseText.includes('título') || lowercaseText.includes('titulo') || 
-        lowercaseText.includes('nombre')) {
-      const titleMatch = transcription.match(/(?:título|titulo|nombre)\s+(?:a|por)\s+["']?([^"'.,]+)["']?/i);
-      if (titleMatch && titleMatch[1]) {
-        updates.title = titleMatch[1].trim();
-      }
-    }
-    
-    // Detectar cambio de descripción
-    if (lowercaseText.includes('descripción') || lowercaseText.includes('descripcion')) {
-      const descMatch = transcription.match(/(?:descripción|descripcion)\s+(?:a|por)\s+["']?([^"'.,]+)["']?/i);
-      if (descMatch && descMatch[1]) {
-        updates.description = descMatch[1].trim();
-      }
-    }
-    
-    // Detectar cambio de fecha de culminación
-    if (lowercaseText.includes('fecha') || lowercaseText.includes('culminación') || 
-        lowercaseText.includes('culminacion') || lowercaseText.includes('vencimiento') || 
-        lowercaseText.includes('finalización')) {
-      const currentYear = new Date().getFullYear();
+    try {
+      // Extraer detalles de la actualización
+      let projectIdentifier = null;
+      let updates = {};
       
-      // Buscar fechas en formato DD/MM o DD/MM/YYYY
-      const dateMatch = transcription.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
-      if (dateMatch) {
-        const day = parseInt(dateMatch[1]);
-        const month = parseInt(dateMatch[2]) - 1; // Meses en JS son 0-11
-        let year = dateMatch[3] ? parseInt(dateMatch[3]) : currentYear;
-        
-        // Ajustar año si se proporcionó en formato corto
-        if (year < 100) {
-          year += year < 50 ? 2000 : 1900;
+      // Normalizar el texto para mejor procesamiento
+      const lowercaseText = transcription.toLowerCase();
+      
+      // MEJORA 1: Extraer el nombre del proyecto con patrones más precisos
+      // Intentar extraer el nombre del proyecto evitando incluir la parte "a [nuevo_valor]"
+      const projectPatterns = [
+        /(?:proyecto|plan)\s+["']?([^"'.,]+?)(?:\s+a\s+|\s+como\s+|\s+con\s+|\s+para\s+|$)/i,
+        /(?:actualizar|cambiar|modificar|editar)\s+(?:el\s+)?(?:proyecto\s+)?["']?([^"'.,]+?)(?:\s+a\s+|\s+como\s+|\s+con\s+|\s+para\s+|$)/i,
+        /(?:título|titulo|nombre|prioridad)\s+(?:del\s+)?(?:proyecto\s+)?["']?([^"'.,]+?)(?:\s+a\s+|\s+como\s+|\s+con\s+|\s+para\s+|$)/i
+      ];
+      
+      for (const pattern of projectPatterns) {
+        const match = transcription.match(pattern);
+        if (match && match[1]) {
+          projectIdentifier = match[1].trim();
+          logger.info(`Identificador de proyecto extraído: ${projectIdentifier}`);
+          break;
         }
-        
-        const date = new Date(year, month, day);
-        updates.culmination_date = date.toISOString().split('T')[0];
-      } else if (lowercaseText.includes('fin de año') || lowercaseText.includes('final de año')) {
-        updates.culmination_date = `${currentYear}-12-31`;
-      } else if (lowercaseText.includes('próximo mes') || lowercaseText.includes('proximo mes')) {
-        const nextMonth = new Date();
-        nextMonth.setMonth(nextMonth.getMonth() + 1);
-        updates.culmination_date = nextMonth.toISOString().split('T')[0];
       }
-    }
-    
-    // Verificar si hay actualizaciones para aplicar
-    if (Object.keys(updates).length === 0) {
-      logger.error('No se especificaron actualizaciones en el comando');
-      return {
-        success: false,
-        response: `No pude identificar qué cambios quieres hacer al proyecto "${projectIdentifier}". Por favor, especifica qué quieres actualizar (título, descripción, prioridad, fecha).`
-      };
-    }
-    
-    // Buscar el proyecto a actualizar
-    let project;
-    
-    if (!isNaN(projectIdentifier)) {
-      // Si el identificador es un número, buscar por ID
-      project = await Project.findByPk(parseInt(projectIdentifier));
-    } else {
-      // Si no, buscar por título
-      project = await Project.findOne({
-        where: {
-          title: {
-            [Op.iLike]: `%${projectIdentifier}%`
+      
+      // Búsqueda de respaldo después de "del proyecto"
+      if (!projectIdentifier) {
+        const afterDelMatch = transcription.match(/del\s+proyecto\s+["']?([^"'.,]+?)(?:\s+a\s+|\s+como\s+|\s+con\s+|\s+para\s+|$)/i);
+        if (afterDelMatch && afterDelMatch[1]) {
+          projectIdentifier = afterDelMatch[1].trim();
+          logger.info(`Identificador de proyecto extraído después de "del proyecto": ${projectIdentifier}`);
+        }
+      }
+      
+      if (!projectIdentifier) {
+        logger.error('No se encontró identificador de proyecto en el comando');
+        return {
+          success: false,
+          response: 'No pude identificar qué proyecto deseas actualizar. Por favor, menciona el nombre o ID del proyecto que quieres modificar.'
+        };
+      }
+      
+      // MEJORA 2: Detectar las actualizaciones a realizar con patrones más flexibles
+      
+      // Detectar cambio de prioridad
+      if (lowercaseText.includes('prioridad') || lowercaseText.includes('probabilidad')) {
+        if (lowercaseText.includes('alta') || lowercaseText.includes('urgente')) {
+          updates.priority = 'high';
+        } else if (lowercaseText.includes('baja')) {
+          updates.priority = 'low';
+        } else if (lowercaseText.includes('media') || lowercaseText.includes('medio') || 
+                  lowercaseText.includes('normal')) {
+          updates.priority = 'medium';
+        }
+      }
+      
+      // MEJORA 3: Detectar cambio de título con patrones más flexibles
+      if (lowercaseText.includes('título') || lowercaseText.includes('titulo') || 
+          lowercaseText.includes('nombre')) {
+        // Buscar después de "a", "por", "como"
+        const titlePatterns = [
+          /(?:título|titulo|nombre)\s+(?:a|por|como)\s+["']?([^"'.,]+)["']?/i,
+          /(?:a|por|como)\s+(?:título|titulo|nombre)\s+["']?([^"'.,]+)["']?/i,
+          /(?:cambiar|actualizar)\s+(?:a|por|como)\s+["']?([^"'.,]+)["']?/i
+        ];
+        
+        for (const pattern of titlePatterns) {
+          const match = transcription.match(pattern);
+          if (match && match[1]) {
+            updates.title = match[1].trim();
+            logger.info(`Título extraído: ${updates.title}`);
+            break;
           }
         }
-      });
+        
+        // Si no se encontró por patrones específicos, buscar después de la preposición "a"
+        if (!updates.title && lowercaseText.includes(' a ')) {
+          const afterAMatch = transcription.match(/\sa\s+["']?([^"'.,]+)["']?/i);
+          if (afterAMatch && afterAMatch[1] && 
+              !afterAMatch[1].startsWith('prioridad') && 
+              !afterAMatch[1].includes('fecha')) {
+            updates.title = afterAMatch[1].trim();
+            logger.info(`Título extraído después de "a": ${updates.title}`);
+          }
+        }
+      }
       
-      // Si no se encontró, intentar buscar con palabras clave
+      // Detectar cambio de descripción
+      if (lowercaseText.includes('descripción') || lowercaseText.includes('descripcion')) {
+        const descMatch = transcription.match(/(?:descripción|descripcion)\s+(?:a|por|como)\s+["']?([^"'.,]+)["']?/i);
+        if (descMatch && descMatch[1]) {
+          updates.description = descMatch[1].trim();
+        }
+      }
+      
+      // Detectar cambio de fecha de culminación
+      if (lowercaseText.includes('fecha') || lowercaseText.includes('culminación') || 
+          lowercaseText.includes('culminacion') || lowercaseText.includes('vencimiento') || 
+          lowercaseText.includes('finalización')) {
+        const currentYear = new Date().getFullYear();
+        
+        // Buscar fechas en formato DD/MM o DD/MM/YYYY
+        const dateMatch = transcription.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
+        if (dateMatch) {
+          const day = parseInt(dateMatch[1]);
+          const month = parseInt(dateMatch[2]) - 1; // Meses en JS son 0-11
+          let year = dateMatch[3] ? parseInt(dateMatch[3]) : currentYear;
+          
+          // Ajustar año si se proporcionó en formato corto
+          if (year < 100) {
+            year += year < 50 ? 2000 : 1900;
+          }
+          
+          const date = new Date(year, month, day);
+          updates.culmination_date = date.toISOString().split('T')[0];
+        } else if (lowercaseText.includes('fin de año') || lowercaseText.includes('final de año')) {
+          updates.culmination_date = `${currentYear}-12-31`;
+        } else if (lowercaseText.includes('próximo mes') || lowercaseText.includes('proximo mes')) {
+          const nextMonth = new Date();
+          nextMonth.setMonth(nextMonth.getMonth() + 1);
+          updates.culmination_date = nextMonth.toISOString().split('T')[0];
+        } else if (lowercaseText.includes('diciembre')) {
+          updates.culmination_date = `${currentYear}-12-31`;
+        } else if (lowercaseText.includes('enero')) {
+          updates.culmination_date = `${currentYear + 1}-01-31`;
+        }
+      }
+      
+      // MEJORA 4: Si no hay actualizaciones pero el comando sugiere cambiar título,
+      // asumir que la parte después de "a" es el nuevo título
+      if (Object.keys(updates).length === 0 && 
+          (lowercaseText.includes('cambiar') || 
+           lowercaseText.includes('actualizar') || 
+           lowercaseText.includes('modificar'))) {
+        
+        if (lowercaseText.includes(' a ')) {
+          const afterAMatch = transcription.match(/\sa\s+["']?([^"'.,]+)["']?/i);
+          if (afterAMatch && afterAMatch[1]) {
+            updates.title = afterAMatch[1].trim();
+            logger.info(`Título inferido después de "a": ${updates.title}`);
+          }
+        }
+      }
+      
+      // Verificar si hay actualizaciones para aplicar
+      if (Object.keys(updates).length === 0) {
+        logger.error('No se especificaron actualizaciones en el comando');
+        return {
+          success: false,
+          response: `No pude identificar qué cambios quieres hacer al proyecto "${projectIdentifier}". Por favor, especifica qué quieres actualizar (título, descripción, prioridad, fecha).`
+        };
+      }
+      
+      // Buscar el proyecto a actualizar
+      let project;
+      
+      if (!isNaN(projectIdentifier)) {
+        // Si el identificador es un número, buscar por ID
+        project = await Project.findByPk(parseInt(projectIdentifier));
+      } else {
+        // Si no, buscar por título (coincidencia parcial)
+        project = await Project.findOne({
+          where: {
+            title: {
+              [Op.iLike]: `%${projectIdentifier}%`
+            }
+          }
+        });
+        
+        // Si no se encontró, intentar buscar con palabras clave
+        if (!project) {
+          const keywords = projectIdentifier.split(' ');
+          if (keywords.length > 0) {
+            const mainKeyword = keywords[0];
+            
+            const possibleProjects = await Project.findAll({
+              where: {
+                title: {
+                  [Op.iLike]: `%${mainKeyword}%`
+                }
+              },
+              limit: 5
+            });
+            
+            if (possibleProjects.length > 0) {
+              // Elegir el primer proyecto
+              project = possibleProjects[0];
+            }
+          }
+        }
+      }
+      
       if (!project) {
-        const keywords = projectIdentifier.split(' ');
-        if (keywords.length > 0) {
-          const mainKeyword = keywords[0];
-          
-          const possibleProjects = await Project.findAll({
-            where: {
-              title: {
-                [Op.iLike]: `%${mainKeyword}%`
-              }
-            },
-            limit: 5
-          });
-          
-          if (possibleProjects.length > 0) {
-            // Elegir el primer proyecto
-            project = possibleProjects[0];
-          }
-        }
+        logger.error(`No se encontró ningún proyecto que coincida con: ${projectIdentifier}`);
+        return {
+          success: false,
+          response: `No encontré ningún proyecto que coincida con "${projectIdentifier}". Por favor, verifica el nombre o ID del proyecto e intenta de nuevo.`
+        };
       }
-    }
-    
-    if (!project) {
-      logger.error(`No se encontró ningún proyecto que coincida con: ${projectIdentifier}`);
+      
+      logger.info(`Actualizando proyecto ${project.id} con: ${JSON.stringify(updates)}`);
+      
+      // Guardar valores anteriores para el mensaje
+      const oldPriority = project.priority;
+      
+      // Aplicar las actualizaciones
+      await project.update(updates);
+      
+      // Generar mensaje de respuesta claro
+      let responseMessage = `He actualizado el proyecto "${project.title}"`;
+      
+      if (updates.title) {
+        responseMessage += `, cambiando su título a "${updates.title}"`;
+      }
+      
+      if (updates.priority && oldPriority !== updates.priority) {
+        const priorityText = {
+          'high': 'alta',
+          'medium': 'media',
+          'low': 'baja'
+        }[updates.priority] || updates.priority;
+        
+        responseMessage += `, estableciendo su prioridad a ${priorityText}`;
+      }
+      
+      if (updates.description) {
+        responseMessage += `, actualizando su descripción`;
+      }
+      
+      if (updates.culmination_date) {
+        responseMessage += `, estableciendo su fecha de finalización para el ${updates.culmination_date}`;
+      }
+      
+      responseMessage += `.`;
+      
+      return {
+        success: true,
+        action: 'updateProject',
+        projectDetails: project.dataValues,
+        response: responseMessage
+      };
+    } catch (error) {
+      logger.error(`Error al actualizar proyecto: ${error.message}`);
       return {
         success: false,
-        response: `No encontré ningún proyecto que coincida con "${projectIdentifier}". Por favor, verifica el nombre o ID del proyecto e intenta de nuevo.`
+        response: `Lo siento, no pude actualizar el proyecto debido a un error: ${error.message}.`
       };
     }
-    
-    logger.info(`Actualizando proyecto ${project.id} con: ${JSON.stringify(updates)}`);
-    
-    // Guardar valores anteriores para el mensaje
-    const oldPriority = project.priority;
-    
-    // Aplicar las actualizaciones
-    await project.update(updates);
-    
-    // Generar mensaje de respuesta claro
-    let responseMessage = `He actualizado el proyecto "${project.title}"`;
-    
-    if (updates.title) {
-      responseMessage += `, cambiando su título a "${updates.title}"`;
-    }
-    
-    if (updates.priority && oldPriority !== updates.priority) {
-      const priorityText = {
-        'high': 'alta',
-        'medium': 'media',
-        'low': 'baja'
-      }[updates.priority] || updates.priority;
-      
-      responseMessage += `, estableciendo su prioridad a ${priorityText}`;
-    }
-    
-    if (updates.description) {
-      responseMessage += `, actualizando su descripción`;
-    }
-    
-    if (updates.culmination_date) {
-      responseMessage += `, estableciendo su fecha de finalización para el ${updates.culmination_date}`;
-    }
-    
-    responseMessage += `.`;
-    
-    return {
-      success: true,
-      action: 'updateProject',
-      projectDetails: project.dataValues,
-      response: responseMessage
-    };
-  } catch (error) {
-    logger.error(`Error al actualizar proyecto: ${error.message}`);
-    return {
-      success: false,
-      response: `Lo siento, no pude actualizar el proyecto debido a un error: ${error.message}.`
-    };
   }
-}
 
 // Extraer detalles de actualización del texto - MEJORADO
 async function extractUpdateDetails(transcription) {
