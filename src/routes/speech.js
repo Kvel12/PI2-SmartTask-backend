@@ -1,8 +1,7 @@
 // routes/speech.js
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
-const speech = require('@google-cloud/speech');
+const { Anthropic } = require('@anthropic-ai/sdk');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -11,7 +10,7 @@ const winston = require('winston');
 const { Task, Project } = require('../models');
 const { Op } = require('sequelize');
 
-// Configurar logger
+// Configure logger with detailed output
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
@@ -25,158 +24,23 @@ const logger = winston.createLogger({
   ]
 });
 
-// Asegurarse de que exista el directorio de uploads
-const uploadDir = path.join(__dirname, '../uploads');
-if (!fs.existsSync(uploadDir)) {
-  try {
-    fs.mkdirSync(uploadDir, { recursive: true });
-    logger.info(`Directorio de uploads creado: ${uploadDir}`);
-  } catch (error) {
-    logger.error(`Error al crear directorio de uploads: ${error.message}`);
-  }
-}
-
-// Configuración de multer para manejar archivos de audio
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const extension = file.originalname.split('.').pop();
-    cb(null, `${uuidv4()}.${extension}`);
-  }
-});
-
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: 10 * 1024 * 1024, // Límite de 10MB
-  },
-  fileFilter: (req, file, cb) => {
-    // Validar el tipo de archivo
-    const allowedMimeTypes = ['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mpeg', 'audio/mp3'];
-    if (allowedMimeTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error(`Formato de archivo no soportado: ${file.mimetype}`), false);
-    }
-  }
-});
-
-// Configurar el cliente de Google Speech-to-Text
-let speechClient;
+// Initialize Claude client
+let claude;
 try {
-  // Asegurarse de que la variable de entorno contiene un JSON válido
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-    speechClient = new speech.SpeechClient({
-      credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON)
+  if (process.env.CLAUDE_API_KEY) {
+    claude = new Anthropic({
+      apiKey: process.env.CLAUDE_API_KEY,
     });
-    logger.info('Cliente de Google Speech-to-Text inicializado correctamente');
+    logger.info('Claude API client initialized successfully');
   } else {
-    logger.error('Variable de entorno GOOGLE_APPLICATION_CREDENTIALS_JSON no configurada');
+    logger.warn('CLAUDE_API_KEY environment variable not set - will use fallback processing');
   }
 } catch (error) {
-  logger.error('Error al configurar Google Speech-to-Text:', error);
+  logger.error(`Error initializing Claude API client: ${error.message}`);
 }
 
-// Endpoint para convertir audio a texto
-router.post('/speech-to-text', auth, upload.single('audio'), async (req, res) => {
-    try {
-    logger.info('Iniciando procesamiento de audio a texto');
-    logger.info(`Headers recibidos: ${JSON.stringify(req.headers)}`);
-        
-    if (!speechClient) {
-        logger.error('Google Speech-to-Text no está configurado correctamente');
-        return res.status(500).json({ error: 'Google Speech-to-Text no está configurado correctamente' });
-    }
-    
-    if (!req.file) {
-        logger.error('No se recibió ningún archivo de audio');
-        return res.status(400).json({ error: 'No se recibió ningún archivo de audio' });
-    }
-
-    logger.info(`Archivo recibido: ${req.file.filename}, tipo: ${req.file.mimetype}, tamaño: ${req.file.size} bytes`);
-
-    // Leer el archivo de audio
-    const audioBytes = fs.readFileSync(req.file.path).toString('base64');
-    
-    // Determinar el encoding basado en el tipo de archivo
-    let encoding;
-    switch (req.file.mimetype) {
-      case 'audio/webm':
-        encoding = 'WEBM_OPUS';
-        break;
-      case 'audio/ogg':
-        encoding = 'OGG_OPUS';
-        break;
-      case 'audio/wav':
-        encoding = 'LINEAR16';
-        break;
-      case 'audio/mpeg':
-      case 'audio/mp3':
-        encoding = 'MP3';
-        break;
-      default:
-        encoding = 'ENCODING_UNSPECIFIED'; // Dejar que Google detecte automáticamente
-    }
-    
-    logger.info(`Procesando audio con encoding: ${encoding}`);
-
-    // Configurar la solicitud para Google Speech-to-Text
-    const request = {
-      audio: {
-        content: audioBytes,
-      },
-      config: {
-        encoding: encoding,
-        sampleRateHertz: 16000, // Frecuencia de muestreo recomendada
-        languageCode: 'es-ES', // Español (España)
-        alternativeLanguageCodes: ['es-MX', 'es-CO', 'es-AR', 'es-CL', 'es-US'], // Soporte para variantes regionales
-        enableAutomaticPunctuation: true,
-        model: 'default',
-      },
-    };
-
-    // Realizar la solicitud a Google Speech-to-Text
-    const [response] = await speechClient.recognize(request);
-    
-    // Extraer la transcripción
-    const transcription = response.results
-      .map(result => result.alternatives[0].transcript)
-      .join('\n');
-    
-    logger.info(`Transcripción completada: "${transcription}"`);
-
-    // Eliminar el archivo de audio temporal
-    try {
-      fs.unlinkSync(req.file.path);
-      logger.info(`Archivo temporal eliminado: ${req.file.path}`);
-    } catch (unlinkError) {
-      logger.error(`Error al eliminar archivo temporal: ${unlinkError.message}`);
-    }
-
-    res.json({ success: true, transcription });
-  } catch (error) {
-    logger.error(`Error detallado en speech-to-text: ${error.stack}`);
-    
-    // Limpiar el archivo en caso de error
-    if (req.file && fs.existsSync(req.file.path)) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (unlinkError) {
-        logger.error(`Error al eliminar archivo temporal: ${unlinkError.message}`);
-      }
-    }
-    
-    res.status(500).json({ 
-      error: 'Error al procesar el audio',
-      details: error.message 
-    });
-  }
-});
-
-// Endpoint para procesar comandos de voz con un LLM o una versión simplificada
-router.post('/process-voice-command', auth, async (req, res) => {
+// Endpoint for processing text from speech
+router.post('/process-voice-text', auth, async (req, res) => {
   const { transcription, commandType, projectId } = req.body;
   
   if (!transcription) {
@@ -184,13 +48,87 @@ router.post('/process-voice-command', auth, async (req, res) => {
   }
 
   try {
-    logger.info(`Procesando comando de voz: "${transcription}"`);
+    logger.info(`Processing voice text: "${transcription}"`);
     
-    // Usar enfoque basado en palabras clave
-    return processWithKeywords(transcription, commandType, projectId, req, res);
+    // Load projects for context
+    let projects = [];
+    try {
+      projects = await Project.findAll();
+      logger.info(`Loaded ${projects.length} projects for context`);
+    } catch (error) {
+      logger.error(`Error loading projects: ${error.message}`);
+    }
+
+    // Determine command type
+    let detectedCommandType = commandType;
+    
+    if (!detectedCommandType) {
+      // First try keyword detection (more reliable)
+      const normalizedText = transcription.toLowerCase();
+      
+      if (normalizedText.includes('crear tarea') || normalizedText.includes('nueva tarea')) {
+        detectedCommandType = 'createTask';
+        logger.info('Command type detected via keywords: createTask');
+      } else if (normalizedText.includes('crear proyecto') || normalizedText.includes('nuevo proyecto')) {
+        detectedCommandType = 'createProject';
+        logger.info('Command type detected via keywords: createProject');
+      } else if (normalizedText.includes('buscar') || normalizedText.includes('encontrar') || 
+                normalizedText.includes('mostrar') || normalizedText.includes('listar')) {
+        detectedCommandType = 'searchTask';
+        logger.info('Command type detected via keywords: searchTask');
+      } else if (normalizedText.includes('actualizar') || normalizedText.includes('modificar') ||
+                normalizedText.includes('cambiar')) {
+        detectedCommandType = 'updateTask';
+        logger.info('Command type detected via keywords: updateTask');
+      } else if (normalizedText.includes('cuántas tareas') || normalizedText.includes('número de tareas')) {
+        detectedCommandType = 'countTasks';
+        logger.info('Command type detected via keywords: countTasks');
+      } else if (claude) {
+        // Use Claude for more complex command detection
+        try {
+          detectedCommandType = await detectCommandTypeWithClaude(transcription);
+          logger.info(`Command type detected with Claude: ${detectedCommandType}`);
+        } catch (claudeError) {
+          logger.error(`Claude command detection error: ${claudeError.message}`);
+          detectedCommandType = 'assistance';
+        }
+      } else {
+        detectedCommandType = 'assistance';
+        logger.info('No specific command detected, defaulting to assistance');
+      }
+    }
+    
+    // Execute the appropriate command
+    let response;
+    logger.info(`Executing command type: ${detectedCommandType}`);
+    
+    switch (detectedCommandType) {
+      case 'createTask':
+        response = await processCreateTaskCommand(transcription, projectId, projects);
+        break;
+      case 'createProject':
+        response = await processCreateProjectCommand(transcription);
+        break;
+      case 'searchTask':
+        response = await processSearchTaskCommand(transcription, projectId);
+        break;
+      case 'updateTask':
+        response = await processUpdateTaskCommand(transcription);
+        break;
+      case 'countTasks':
+        response = await processCountTasksCommand();
+        break;
+      case 'assistance':
+      default:
+        response = await processAssistanceCommand(transcription);
+        break;
+    }
+    
+    logger.info(`Command processed successfully, response type: ${response.success ? 'success' : 'error'}`);
+    return res.json(response);
   } catch (error) {
-    logger.error(`Error al procesar comando de voz: ${error.message}`, error);
-    res.status(500).json({ 
+    logger.error(`Error processing voice command: ${error.message}`, error);
+    return res.status(500).json({ 
       success: false,
       error: 'Error al procesar el comando de voz',
       details: error.message 
@@ -198,993 +136,834 @@ router.post('/process-voice-command', auth, async (req, res) => {
   }
 });
 
-// Endpoint para procesar texto transcrito directamente (sin audio)
-router.post('/process-voice-text', auth, async (req, res) => {
-    const { transcription, commandType, projectId } = req.body;
-    
-    if (!transcription) {
-      return res.status(400).json({ error: 'La transcripción es requerida' });
+/**
+ * Detect command type using Claude
+ */
+async function detectCommandTypeWithClaude(transcription) {
+  try {
+    if (!claude) {
+      throw new Error('Claude client not initialized');
     }
-  
-    try {
-      logger.info(`Procesando transcripción de voz: "${transcription}"`);
-      
-      // Obtener información de proyectos y tareas para tener contexto
-      let projectsContext = [];
-      let tasksContext = [];
-      
-      try {
-        // Obtener todos los proyectos (sin filtrar por usuario)
-        const projects = await Project.findAll();
-        
-        projectsContext = projects.map(p => ({
-          id: p.id,
-          title: p.title,
-          priority: p.priority,
-          culmination_date: p.culmination_date
-        }));
-        
-        // Si hay un proyecto específico, obtener sus tareas
-        if (projectId) {
-          const tasks = await Task.findAll({ where: { projectId } });
-          tasksContext = tasks.map(t => ({
-            id: t.id,
-            title: t.title,
-            status: t.status,
-            completion_date: t.completion_date
-          }));
-        }
-      } catch (error) {
-        logger.warn(`Error al obtener contexto para procesamiento: ${error.message}`);
-        // Continuamos sin contexto si hay un error
-      }
-      
-      // Preprocesar la transcripción para detectar el tipo de comando
-      let detectedCommandType = commandType;
-      
-      if (!detectedCommandType) {
-        // Detección por palabras clave (más simple y confiable)
-        const normalizedText = transcription.toLowerCase();
-        
-        if (normalizedText.includes('crear tarea') || normalizedText.includes('nueva tarea')) {
-          detectedCommandType = 'createTask';
-          logger.info('Tipo de comando detectado mediante palabras clave: createTask');
-        } else if (normalizedText.includes('crear proyecto') || normalizedText.includes('nuevo proyecto')) {
-          detectedCommandType = 'createProject';
-          logger.info('Tipo de comando detectado mediante palabras clave: createProject');
-        } else if (normalizedText.includes('buscar') || normalizedText.includes('encontrar') || 
-                   normalizedText.includes('mostrar') || normalizedText.includes('listar')) {
-          detectedCommandType = 'searchTask';
-          logger.info('Tipo de comando detectado mediante palabras clave: searchTask');
-        } else if (normalizedText.includes('actualizar') || normalizedText.includes('modificar') ||
-                  normalizedText.includes('cambiar')) {
-          detectedCommandType = 'updateTask';
-          logger.info('Tipo de comando detectado mediante palabras clave: updateTask');
-        } else {
-          detectedCommandType = 'assistance';
-          logger.info('No se detectó un comando específico, usando asistencia por defecto');
-        }
-      }
-      
-      // Generar respuesta según el tipo de comando detectado
-      let response;
-      
-      switch (detectedCommandType) {
-        case 'createTask':
-          response = await processCreateTaskCommand(transcription, projectId, projectsContext, req);
-          break;
-        case 'createProject':
-          response = await processCreateProjectCommand(transcription, projectsContext);
-          break;
-        case 'searchTask':
-          response = await processSearchTaskCommand(transcription, projectId, projectsContext, tasksContext);
-          break;
-        case 'updateTask':
-          response = await processUpdateTaskCommand(transcription, projectsContext, tasksContext);
-          break;
-        case 'assistance':
-        default:
-          response = await processAssistanceCommand(transcription, projectsContext, tasksContext);
-          break;
-      }
-      
-      logger.info(`Respuesta generada para comando de voz`);
-      res.json(response);
-    } catch (error) {
-      logger.error(`Error al procesar texto de voz: ${error.message}`, error);
-      res.status(500).json({ 
-        success: false,
-        error: 'Error al procesar el texto de voz',
-        details: error.message 
-      });
-    }
-  });
 
+    const message = await claude.messages.create({
+      model: "claude-3-haiku-20240307", // Using the basic model to keep costs low
+      max_tokens: 50,
+      temperature: 0.2,
+      system: "You are a voice command classifier for a task management app. Classify the text into one of these categories: createTask, createProject, searchTask, updateTask, countTasks, assistance.",
+      messages: [
+        {
+          role: "user",
+          content: `Analyze this voice command: "${transcription}" 
+          Classify it into ONE of these categories: 
+          - createTask: for creating a new task
+          - createProject: for creating a new project
+          - searchTask: for finding or listing tasks
+          - updateTask: for changing task details
+          - countTasks: for counting or getting statistics about tasks
+          - assistance: for help requests or anything else
+          
+          Reply with ONLY the category name, nothing else.`
+        }
+      ]
+    });
 
-// Función para procesar comandos mediante palabras clave
-async function processWithKeywords(transcription, commandType, projectId, req, res) {
-  const lowercaseTranscription = transcription.toLowerCase();
-  let detectedType = commandType || 'assistance';
-  
-  // Detectar tipo por palabras clave si no se especificó
-  if (!commandType) {
-    if (lowercaseTranscription.includes('crear tarea') || lowercaseTranscription.includes('nueva tarea')) {
-      detectedType = 'createTask';
-    } else if (lowercaseTranscription.includes('crear proyecto') || lowercaseTranscription.includes('nuevo proyecto')) {
-      detectedType = 'createProject';
-    } else if (lowercaseTranscription.includes('buscar') || lowercaseTranscription.includes('encontrar') || 
-               lowercaseTranscription.includes('mostrar') || lowercaseTranscription.includes('listar')) {
-      detectedType = 'searchTask';
-    } else if (lowercaseTranscription.includes('actualizar') || lowercaseTranscription.includes('modificar') ||
-               lowercaseTranscription.includes('cambiar')) {
-      detectedType = 'updateTask';
-    }
-  }
-  
-  // Generar respuesta basada en palabras clave
-  switch (detectedType) {
-    case 'createTask': {
-      // Extraer título básico
-      const titleMatch = transcription.match(/(?:crear|nueva) tarea (?:llamada|titulada|con nombre|con título)? ?["']?([^"'.,]+)["']?/i);
-      const title = titleMatch ? titleMatch[1].trim() : "Nueva tarea";
-      
-      // Intentar extraer estado
-      let status = 'pending';
-      if (lowercaseTranscription.includes('en progreso')) status = 'in_progress';
-      else if (lowercaseTranscription.includes('completada')) status = 'completed';
-      else if (lowercaseTranscription.includes('cancelada')) status = 'cancelled';
-      
-      // Intentar extraer fecha límite básica
-      let completionDate = new Date();
-      if (lowercaseTranscription.includes('mañana')) {
-        completionDate.setDate(completionDate.getDate() + 1);
-      } else if (lowercaseTranscription.includes('próxima semana')) {
-        completionDate.setDate(completionDate.getDate() + 7);
-      } else if (lowercaseTranscription.includes('próximo mes')) {
-        completionDate.setMonth(completionDate.getMonth() + 1);
-      } else {
-        // Por defecto, una semana desde hoy
-        completionDate.setDate(completionDate.getDate() + 7);
-      }
-      
-      // Si no se proporciona un projectId, intentar encontrar uno mencionado
-      let targetProjectId = projectId;
-      let targetProjectName = "";
-      
-      if (!targetProjectId) {
-        try {
-          const projects = await Project.findAll();
-          
-          // Buscar un proyecto mencionado en el texto
-          for (const project of projects) {
-            if (lowercaseTranscription.includes(project.title.toLowerCase())) {
-              targetProjectId = project.id;
-              targetProjectName = project.title;
-              break;
-            }
-          }
-          
-          // Si no se encuentra ninguna coincidencia, usar el primer proyecto
-          if (!targetProjectId && projects.length > 0) {
-            targetProjectId = projects[0].id;
-            targetProjectName = projects[0].title;
-          }
-        } catch (error) {
-          logger.error(`Error al buscar proyectos: ${error.message}`);
-        }
-      } else {
-        // Si se proporcionó un projectId, obtenemos su título
-        try {
-          const project = await Project.findByPk(projectId);
-          if (project) {
-            targetProjectName = project.title;
-          }
-        } catch (error) {
-          logger.error(`Error al obtener detalles del proyecto: ${error.message}`);
-        }
-      }
-      
-      if (!targetProjectId) {
-        return res.json({
-          success: false,
-          error: 'No se ha podido determinar a qué proyecto asignar la tarea'
-        });
-      }
-      
-      // Extraer descripción, si está disponible
-      let description = 'Tarea creada por comando de voz';
-      if (lowercaseTranscription.includes('para')) {
-        const descriptionMatch = transcription.match(/para (.+)$/i);
-        if (descriptionMatch) {
-          description = descriptionMatch[1].trim();
-        }
-      }
-      
-      // Crear la tarea en la base de datos
-      try {
-        const newTask = await Task.create({
-          title: title,
-          description: description,
-          status: status,
-          completion_date: completionDate.toISOString().split('T')[0],
-          projectId: targetProjectId,
-          creation_date: new Date()
-        });
-        
-        return res.json({
-          success: true,
-          action: 'createTask',
-          taskDetails: newTask.dataValues,
-          message: `He creado una nueva tarea: "${title}" en el proyecto "${targetProjectName}".`
-        });
-      } catch (dbError) {
-        logger.error(`Error al crear tarea: ${dbError.message}`);
-        
-        return res.json({
-          success: false,
-          error: `Error al crear la tarea: ${dbError.message}`
-        });
+    // Extract just the category name from response
+    const cleanResponse = message.content[0].text.trim().toLowerCase();
+    const validTypes = ['createtask', 'createproject', 'searchtask', 'updatetask', 'counttasks', 'assistance'];
+    
+    for (const validType of validTypes) {
+      if (cleanResponse.includes(validType)) {
+        return validType;
       }
     }
     
-    case 'createProject': {
-      // Extraer título básico
-      const titleMatch = transcription.match(/(?:crear|nuevo) proyecto (?:llamado|titulado|con nombre|con título)? ?["']?([^"'.,]+)["']?/i);
-      const title = titleMatch ? titleMatch[1].trim() : "Nuevo proyecto";
-      
-      // Intentar extraer prioridad
-      let priority = 'medium';
-      if (lowercaseTranscription.includes('alta') || lowercaseTranscription.includes('urgente')) {
-        priority = 'high';
-      } else if (lowercaseTranscription.includes('baja')) {
-        priority = 'low';
-      }
-      
-      // Extraer descripción, si está disponible
-      let description = 'Proyecto creado por comando de voz';
-      if (lowercaseTranscription.includes('para')) {
-        const descriptionMatch = transcription.match(/para (.+)$/i);
-        if (descriptionMatch) {
-          description = descriptionMatch[1].trim();
-        }
-      }
-      
-      // Verificar si ya existe un proyecto con ese título
-      try {
-        const existingProject = await Project.findOne({
-          where: {
-            title: title
-          }
-        });
-        
-        if (existingProject) {
-          return res.json({
-            success: false,
-            error: 'Ya existe un proyecto con ese título'
-          });
-        }
-        
-        // Crear el proyecto en la base de datos
-        const newProject = await Project.create({
-          title: title,
-          description: description,
-          priority: priority,
-          culmination_date: null,
-          creation_date: new Date()
-        });
-        
-        return res.json({
-          success: true,
-          action: 'createProject',
-          projectDetails: newProject.dataValues,
-          message: `He creado un nuevo proyecto: "${title}".`
-        });
-      } catch (dbError) {
-        logger.error(`Error al crear proyecto: ${dbError.message}`);
-        
-        return res.json({
-          success: false,
-          error: `Error al crear el proyecto: ${dbError.message}`
-        });
-      }
-    }
-    
-    case 'searchTask': {
-      // Extraer término de búsqueda básico
-      const searchMatch = transcription.match(/(?:buscar|encontrar|mostrar|listar) (?:tareas? (?:sobre|de|con|relacionadas))? ?["']?([^"'.,]+)["']?/i);
-      const searchTerm = searchMatch ? searchMatch[1].trim() : "";
-      
-      // Determinar el estado si está especificado
-      let status = null;
-      if (lowercaseTranscription.includes('pendiente')) status = 'pending';
-      else if (lowercaseTranscription.includes('en progreso')) status = 'in_progress';
-      else if (lowercaseTranscription.includes('completada')) status = 'completed';
-      else if (lowercaseTranscription.includes('cancelada')) status = 'cancelled';
-      
-      // Buscar tareas según los criterios
-      try {
-        // Construir la cláusula WHERE para la búsqueda
-        const whereClause = {};
-        
-        if (searchTerm) {
-          whereClause[Op.or] = [
-            { title: { [Op.iLike]: `%${searchTerm}%` } },
-            { description: { [Op.iLike]: `%${searchTerm}%` } }
-          ];
-        }
-        
-        if (status) {
-          whereClause.status = status;
-        }
-        
-        // Si hay un proyecto específico, filtrar por él
-        if (projectId) {
-          whereClause.projectId = projectId;
-        }
-        
-        // Realizar la búsqueda
-        const tasks = await Task.findAll({
-          where: whereClause,
-          include: [
-            {
-              model: Project,
-              attributes: ['id', 'title']
-            }
-          ]
-        });
-        
-        // Formatear los resultados para la respuesta
-        const formattedTasks = tasks.map(task => ({
-          id: task.id,
-          title: task.title,
-          status: task.status,
-          completion_date: task.completion_date,
-          projectName: task.Project ? task.Project.title : 'Desconocido'
-        }));
-        
-        return res.json({
-          success: true,
-          action: 'searchTasks',
-          searchParams: {
-            searchTerm,
-            status
-          },
-          searchResults: formattedTasks,
-          message: `He encontrado ${formattedTasks.length} tareas que coinciden con tu búsqueda.`
-        });
-      } catch (searchError) {
-        logger.error(`Error al buscar tareas: ${searchError.message}`);
-        
-        return res.json({
-          success: false,
-          error: `Error al buscar tareas: ${searchError.message}`
-        });
-      }
-    }
-    
-    case 'updateTask': {
-      // Extraer identificador de la tarea
-      const taskIdentifierMatch = transcription.match(/(?:actualizar|modificar|cambiar) (?:la )?tarea (?:llamada |titulada |con nombre |con título )?["']?([^"'.,]+)["']?/i);
-      const taskIdentifier = taskIdentifierMatch ? taskIdentifierMatch[1].trim() : null;
-      
-      if (!taskIdentifier) {
-        return res.json({
-          success: false,
-          error: 'No se pudo identificar qué tarea deseas actualizar'
-        });
-      }
-      
-      // Buscar la tarea por su identificador
-      let task;
-      
-      try {
-        // Si es un número, buscar por ID
-        if (!isNaN(taskIdentifier)) {
-          task = await Task.findByPk(parseInt(taskIdentifier));
-        } else {
-          // Si es texto, buscar por título
-          task = await Task.findOne({
-            where: {
-              title: {
-                [Op.iLike]: `%${taskIdentifier}%`
-              }
-            }
-          });
-        }
-        
-        if (!task) {
-          return res.json({
-            success: false,
-            error: 'No se encontró la tarea a actualizar'
-          });
-        }
-        
-        // Determinar qué campos actualizar
-        const updates = {};
-        
-        // Actualizar título si está especificado
-        const titleMatch = transcription.match(/cambiar (?:el )?título (?:a|por) ["']?([^"'.,]+)["']?/i);
-        if (titleMatch) {
-          updates.title = titleMatch[1].trim();
-        }
-        
-        // Actualizar estado si está especificado
-        if (lowercaseTranscription.includes('estado')) {
-          if (lowercaseTranscription.includes('pendiente')) updates.status = 'pending';
-          else if (lowercaseTranscription.includes('en progreso')) updates.status = 'in_progress';
-          else if (lowercaseTranscription.includes('completada')) updates.status = 'completed';
-          else if (lowercaseTranscription.includes('cancelada')) updates.status = 'cancelled';
-        }
-        
-        // Actualizar fecha si está especificada
-        if (lowercaseTranscription.includes('fecha')) {
-          let newDate = new Date();
-          
-          if (lowercaseTranscription.includes('mañana')) {
-            newDate.setDate(newDate.getDate() + 1);
-          } else if (lowercaseTranscription.includes('próxima semana')) {
-            newDate.setDate(newDate.getDate() + 7);
-          } else if (lowercaseTranscription.includes('próximo mes')) {
-            newDate.setMonth(newDate.getMonth() + 1);
-          }
-          
-          updates.completion_date = newDate.toISOString().split('T')[0];
-        }
-        
-        // Si no hay campos para actualizar, informar al usuario
-        if (Object.keys(updates).length === 0) {
-          return res.json({
-            success: false,
-            error: 'No se identificaron campos para actualizar'
-          });
-        }
-        
-        // Actualizar la tarea
-        await task.update(updates);
-        
-        return res.json({
-          success: true,
-          action: 'updateTask',
-          taskDetails: task.dataValues,
-          message: `He actualizado la tarea "${task.title}" correctamente.`
-        });
-      } catch (updateError) {
-        logger.error(`Error al actualizar tarea: ${updateError.message}`);
-        
-        return res.json({
-          success: false,
-          error: `Error al actualizar la tarea: ${updateError.message}`
-        });
-      }
-    }
-    
-    case 'assistance':
-    default:
-      return res.json({
-        success: true,
-        response: '¿En qué puedo ayudarte? Puedes pedirme crear tareas o proyectos, buscar información o ayudarte con la gestión de tus actividades.'
-      });
+    // Default to assistance if no valid type found
+    return 'assistance';
+  } catch (error) {
+    logger.error(`Error using Claude for command detection: ${error.message}`);
+    throw error;
   }
 }
 
-// Función para procesar comandos de creación de tareas
-async function processCreateTaskCommand(transcription, projectId, projectsContext = [], req) {
+/**
+ * Process a command to create a task
+ */
+async function processCreateTaskCommand(transcription, projectId, projects = []) {
+  logger.info(`Processing create task command: "${transcription}"`);
+  
   try {
-    // Versión simplificada para crear tareas basado en palabras clave
-    const lowercaseTranscription = transcription.toLowerCase();
+    // Extract task details
+    let taskDetails;
     
-    // Extraer título básico
-    const titleMatch = transcription.match(/(?:crear|nueva) tarea (?:llamada|titulada|con nombre|con título)? ?["']?([^"'.,]+)["']?/i);
-    let title = titleMatch ? titleMatch[1].trim() : "Nueva tarea";
-    
-    // Si no hay un título específico, tratar de usar la parte después de "crear tarea"
-    if (title === "Nueva tarea" && lowercaseTranscription.includes("crear tarea")) {
-      const fullTextMatch = transcription.match(/crear tarea (.+)/i);
-      if (fullTextMatch) {
-        // Limitar a las primeras palabras para que no sea demasiado largo
-        const fullText = fullTextMatch[1].trim();
-        const words = fullText.split(' ');
-        if (words.length > 3) {
-          title = words.slice(0, 3).join(' ');
-        } else {
-          title = fullText;
-        }
+    if (claude) {
+      try {
+        taskDetails = await extractTaskDetailsWithClaude(transcription);
+        logger.info(`Task details extracted with Claude: ${JSON.stringify(taskDetails)}`);
+      } catch (claudeError) {
+        logger.error(`Error extracting task details with Claude: ${claudeError.message}`);
+        taskDetails = extractTaskDetailsWithKeywords(transcription);
       }
-    }
-    
-    // Intentar extraer estado
-    let status = 'pending';
-    if (lowercaseTranscription.includes('en progreso')) status = 'in_progress';
-    else if (lowercaseTranscription.includes('completada')) status = 'completed';
-    else if (lowercaseTranscription.includes('cancelada')) status = 'cancelled';
-    
-    // Intentar extraer fecha límite básica
-    let completionDate = new Date();
-    if (lowercaseTranscription.includes('mañana')) {
-      completionDate.setDate(completionDate.getDate() + 1);
-    } else if (lowercaseTranscription.includes('próxima semana')) {
-      completionDate.setDate(completionDate.getDate() + 7);
-    } else if (lowercaseTranscription.includes('próximo mes')) {
-      completionDate.setMonth(completionDate.getMonth() + 1);
     } else {
-      // Por defecto, una semana desde hoy
-      completionDate.setDate(completionDate.getDate() + 7);
+      taskDetails = extractTaskDetailsWithKeywords(transcription);
+      logger.info(`Task details extracted with keywords: ${JSON.stringify(taskDetails)}`);
     }
     
-    // Si no se proporciona un projectId, intentar encontrar uno mencionado
+    // Ensure we have a project ID
     let targetProjectId = projectId;
     let targetProjectName = "";
     
-    if (!targetProjectId) {
-      try {
-        // Si tenemos contexto de proyectos, usarlo
-        if (projectsContext && projectsContext.length > 0) {
-          // Buscar un proyecto mencionado en el texto
-          for (const project of projectsContext) {
-            if (lowercaseTranscription.includes(project.title.toLowerCase())) {
-              targetProjectId = project.id;
-              targetProjectName = project.title;
-              logger.info(`Proyecto identificado en transcripción: ${targetProjectName} (ID: ${targetProjectId})`);
-              break;
-            }
-          }
-          
-          // Si no se encuentra ninguna coincidencia, usar el primer proyecto
-          if (!targetProjectId) {
-            targetProjectId = projectsContext[0].id;
-            targetProjectName = projectsContext[0].title;
-            logger.info(`No se identificó proyecto en transcripción, usando el primero: ${targetProjectName} (ID: ${targetProjectId})`);
-          }
-        } else {
-          // Obtener proyectos de la base de datos
-          const projects = await Project.findAll();
-          
-          if (projects.length > 0) {
-            // Buscar un proyecto mencionado en el texto
-            for (const project of projects) {
-              if (lowercaseTranscription.includes(project.title.toLowerCase())) {
-                targetProjectId = project.id;
-                targetProjectName = project.title;
-                logger.info(`Proyecto identificado en transcripción: ${targetProjectName} (ID: ${targetProjectId})`);
-                break;
-              }
-            }
-            
-            // Si no se encuentra ninguna coincidencia, usar el primer proyecto
-            if (!targetProjectId) {
-              targetProjectId = projects[0].id;
-              targetProjectName = projects[0].title;
-              logger.info(`No se identificó proyecto en transcripción, usando el primero: ${targetProjectName} (ID: ${targetProjectId})`);
-            }
-          }
+    if (!targetProjectId && projects.length > 0) {
+      // Find project by name mentioned in command
+      const normalizedText = transcription.toLowerCase();
+      
+      for (const project of projects) {
+        if (normalizedText.includes(project.title.toLowerCase())) {
+          targetProjectId = project.id;
+          targetProjectName = project.title;
+          logger.info(`Found project in command: ${targetProjectName} (ID: ${targetProjectId})`);
+          break;
         }
-      } catch (error) {
-        logger.error(`Error al buscar proyectos: ${error.message}`);
       }
-    } else {
-      // Si se proporcionó un projectId, obtenemos su título
+      
+      // If no project found in text, use the first one
+      if (!targetProjectId) {
+        targetProjectId = projects[0].id;
+        targetProjectName = projects[0].title;
+        logger.info(`No project found in command, using first project: ${targetProjectName} (ID: ${targetProjectId})`);
+      }
+    } else if (targetProjectId) {
+      // Get project name for the given ID
       try {
-        const project = await Project.findByPk(projectId);
+        const project = await Project.findByPk(targetProjectId);
         if (project) {
           targetProjectName = project.title;
+          logger.info(`Using specified project: ${targetProjectName} (ID: ${targetProjectId})`);
         }
       } catch (error) {
-        logger.error(`Error al obtener detalles del proyecto: ${error.message}`);
+        logger.error(`Error getting project details: ${error.message}`);
       }
-    }
-    
-    if (!targetProjectId) {
+    } else {
+      logger.error(`No projects available and no project ID specified`);
       return {
         success: false,
-        error: 'No se ha podido determinar a qué proyecto asignar la tarea'
+        error: 'No se pudo determinar un proyecto para la tarea'
       };
     }
     
-    // Extraer descripción, si está disponible
-    let description = 'Tarea creada por comando de voz';
-    if (lowercaseTranscription.includes('para')) {
-      const descriptionMatch = transcription.match(/para (.+)$/i);
-      if (descriptionMatch) {
-        description = descriptionMatch[1].trim();
-      }
-    }
+    // Create the task
+    const taskData = {
+      title: taskDetails.title || 'Nueva tarea',
+      description: taskDetails.description || 'Tarea creada por comando de voz',
+      status: taskDetails.status || 'pending',
+      completion_date: taskDetails.completion_date || new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0],
+      projectId: targetProjectId,
+      creation_date: new Date()
+    };
     
-    // Crear la tarea en la base de datos
-    try {
-      logger.info(`Creando tarea: "${title}" en proyecto ID: ${targetProjectId}`);
-      
-      const newTask = await Task.create({
-        title: title,
-        description: description,
-        status: status,
-        completion_date: completionDate.toISOString().split('T')[0],
-        projectId: targetProjectId,
-        creation_date: new Date()
-      });
-      
-      logger.info(`Tarea creada con éxito: ID ${newTask.id}`);
-      
-      return {
-        success: true,
-        action: 'createTask',
-        taskDetails: newTask.dataValues,
-        message: `He creado una nueva tarea: "${title}" en el proyecto "${targetProjectName}".`
-      };
-    } catch (dbError) {
-      logger.error(`Error al crear tarea en base de datos: ${dbError.message}`);
-      
-      return {
-        success: false,
-        error: `Error al crear la tarea: ${dbError.message}`
-      };
-    }
-  } catch (error) {
-    logger.error(`Error al procesar comando de creación de tarea: ${error.message}`);
+    logger.info(`Creating task with data: ${JSON.stringify(taskData)}`);
+    
+    const newTask = await Task.create(taskData);
+    logger.info(`Task created successfully with ID: ${newTask.id}`);
     
     return {
+      success: true,
+      action: 'createTask',
+      taskDetails: newTask.dataValues,
+      message: `He creado una nueva tarea: "${taskData.title}" en el proyecto "${targetProjectName}".`
+    };
+  } catch (error) {
+    logger.error(`Error creating task: ${error.message}`);
+    return {
       success: false,
-      action: 'error',
-      error: `Error al procesar la solicitud: ${error.message}`
+      error: `Error al crear la tarea: ${error.message}`
     };
   }
 }
 
-// Procesar un comando para crear un proyecto
-async function processCreateProjectCommand(transcription, projectsContext = []) {
+/**
+ * Extract task details using Claude
+ */
+async function extractTaskDetailsWithClaude(transcription) {
   try {
-    // Versión simplificada basada en palabras clave
-    const lowercaseTranscription = transcription.toLowerCase();
-    
-    // Extraer título básico
-    const titleMatch = transcription.match(/(?:crear|nuevo) proyecto (?:llamado|titulado|con nombre|con título)? ?["']?([^"'.,]+)["']?/i);
-    let title = titleMatch ? titleMatch[1].trim() : "Nuevo proyecto";
-    
-    // Si no hay un título específico, tratar de usar la parte después de "crear proyecto"
-    if (title === "Nuevo proyecto" && lowercaseTranscription.includes("crear proyecto")) {
-      const fullTextMatch = transcription.match(/crear proyecto (.+)/i);
-      if (fullTextMatch) {
-        // Limitar a las primeras palabras para que no sea demasiado largo
-        const fullText = fullTextMatch[1].trim();
-        const words = fullText.split(' ');
-        if (words.length > 3) {
-          title = words.slice(0, 3).join(' ');
-        } else {
-          title = fullText;
+    const message = await claude.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 500,
+      temperature: 0.2,
+      system: `You're a task extraction specialist. Extract task details from voice commands.`,
+      messages: [
+        {
+          role: "user",
+          content: `Extract the following details from this voice command: "${transcription}"
+          
+          Return ONLY a JSON object with these fields:
+          - title: the task title (required)
+          - description: a description of the task (optional)
+          - status: the task status (in_progress, completed, pending, cancelled)
+          - completion_date: deadline in YYYY-MM-DD format (optional)
+          
+          For fields not mentioned, use null. If status is mentioned as "en progreso", use "in_progress".
+          Return ONLY the JSON, nothing else.`
         }
-      }
-    }
+      ]
+    });
+
+    // Extract the JSON from the response
+    const responseText = message.content[0].text.trim();
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     
-    // Intentar extraer prioridad
-    let priority = 'medium';
-    if (lowercaseTranscription.includes('alta') || lowercaseTranscription.includes('urgente')) {
-      priority = 'high';
-    } else if (lowercaseTranscription.includes('baja')) {
-      priority = 'low';
-    }
-    
-    // Extraer descripción, si está disponible
-    let description = 'Proyecto creado por comando de voz';
-    if (lowercaseTranscription.includes('para')) {
-      const descriptionMatch = transcription.match(/para (.+)$/i);
-      if (descriptionMatch) {
-        description = descriptionMatch[1].trim();
-      }
-    }
-    
-    // Verificar si ya existe un proyecto con ese título
-    try {
-      const existingProject = await Project.findOne({
-        where: {
-          title: title
-        }
-      });
-      
-      if (existingProject) {
-        return {
-          success: false,
-          error: 'Ya existe un proyecto con ese título'
-        };
-      }
-      
-      // Crear el proyecto en la base de datos
-      logger.info(`Creando proyecto: "${title}"`);
-      
-      const newProject = await Project.create({
-        title: title,
-        description: description,
-        priority: priority,
-        culmination_date: null,
-        creation_date: new Date()
-      });
-      
-      logger.info(`Proyecto creado con éxito: ID ${newProject.id}`);
-      
-      return {
-        success: true,
-        action: 'createProject',
-        projectDetails: newProject.dataValues,
-        message: `He creado un nuevo proyecto: "${title}".`
-      };
-    } catch (dbError) {
-      logger.error(`Error al crear proyecto en base de datos: ${dbError.message}`);
-      
-      return {
-        success: false,
-        error: `Error al crear el proyecto: ${dbError.message}`
-      };
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    } else {
+      throw new Error('Could not extract JSON from Claude response');
     }
   } catch (error) {
-    logger.error(`Error al procesar comando de creación de proyecto: ${error.message}`);
-    
-    return {
-      success: false,
-      error: `Error al procesar la solicitud: ${error.message}`
-    };
+    logger.error(`Claude task extraction error: ${error.message}`);
+    throw error;
   }
 }
 
-// Procesar un comando para buscar tareas
-async function processSearchTaskCommand(transcription, projectId, projectsContext = [], tasksContext = []) {
-  try {
-    // Versión simplificada basada en palabras clave
-    const lowercaseTranscription = transcription.toLowerCase();
-    
-    // Extraer término de búsqueda básico
-    const searchMatch = transcription.match(/(?:buscar|encontrar|mostrar|listar) (?:tareas? (?:sobre|de|con|relacionadas))? ?["']?([^"'.,]+)["']?/i);
-    const searchTerm = searchMatch ? searchMatch[1].trim() : "";
-    
-    // Determinar el estado si está especificado
-    let status = null;
-    if (lowercaseTranscription.includes('pendiente')) status = 'pending';
-    else if (lowercaseTranscription.includes('en progreso')) status = 'in_progress';
-    else if (lowercaseTranscription.includes('completada')) status = 'completed';
-    else if (lowercaseTranscription.includes('cancelada')) status = 'cancelled';
-    
-    // Verificar si se menciona un proyecto específico
-    let searchProjectId = projectId;
-    
-    if (!searchProjectId) {
-      // Buscar menciones de proyectos en el texto
-      if (projectsContext && projectsContext.length > 0) {
-        for (const project of projectsContext) {
-          if (lowercaseTranscription.includes(project.title.toLowerCase())) {
-            searchProjectId = project.id;
-            break;
-          }
-        }
-      } else {
-        // Obtener proyectos de la base de datos
-        const projects = await Project.findAll();
-        
-        for (const project of projects) {
-          if (lowercaseTranscription.includes(project.title.toLowerCase())) {
-            searchProjectId = project.id;
-            break;
-          }
-        }
-      }
-    }
-    
-    // Buscar tareas según los criterios
-    try {
-      // Construir la cláusula WHERE para la búsqueda
-      const whereClause = {};
-      
-      if (searchTerm) {
-        whereClause[Op.or] = [
-          { title: { [Op.iLike]: `%${searchTerm}%` } },
-          { description: { [Op.iLike]: `%${searchTerm}%` } }
-        ];
-      }
-      
-      if (status) {
-        whereClause.status = status;
-      }
-      
-      // Si hay un proyecto específico, filtrar por él
-      if (searchProjectId) {
-        whereClause.projectId = searchProjectId;
-      }
-      
-      logger.info(`Buscando tareas con criterios: ${JSON.stringify(whereClause)}`);
-      
-      // Realizar la búsqueda
-      const tasks = await Task.findAll({
-        where: whereClause,
-        include: [
-          {
-            model: Project,
-            attributes: ['id', 'title']
-          }
-        ]
-      });
-      
-      logger.info(`Se encontraron ${tasks.length} tareas`);
-      
-      // Formatear los resultados para la respuesta
-      const formattedTasks = tasks.map(task => ({
-        id: task.id,
-        title: task.title,
-        status: task.status,
-        completion_date: task.completion_date,
-        projectName: task.Project ? task.Project.title : 'Desconocido'
-      }));
-      
-      return {
-        success: true,
-        action: 'searchTasks',
-        searchParams: {
-          searchTerm,
-          status
-        },
-        searchResults: formattedTasks,
-        message: `He encontrado ${formattedTasks.length} tareas que coinciden con tu búsqueda.`
-      };
-    } catch (searchError) {
-      logger.error(`Error al buscar tareas: ${searchError.message}`);
-      
-      return {
-        success: false,
-        error: `Error al buscar tareas: ${searchError.message}`
-      };
-    }
-  } catch (error) {
-    logger.error(`Error al procesar comando de búsqueda: ${error.message}`);
-    
-    return {
-      success: false,
-      error: `Error al procesar la solicitud: ${error.message}`
-    };
-  }
-}
-
-// Procesar un comando para actualizar una tarea
-async function processUpdateTaskCommand(transcription, projectsContext = [], tasksContext = []) {
-  try {
-    // Versión simplificada basada en palabras clave
-    const lowercaseTranscription = transcription.toLowerCase();
-    
-    // Extraer identificador de la tarea
-    const taskIdentifierMatch = transcription.match(/(?:actualizar|modificar|cambiar) (?:la )?tarea (?:llamada |titulada |con nombre |con título )?["']?([^"'.,]+)["']?/i);
-    const taskIdentifier = taskIdentifierMatch ? taskIdentifierMatch[1].trim() : null;
-    
-    if (!taskIdentifier) {
-      return {
-        success: false,
-        error: 'No se pudo identificar qué tarea deseas actualizar'
-      };
-    }
-    
-    // Buscar la tarea por su identificador
-    let task;
-    
-    try {
-      // Si es un número, buscar por ID
-      if (!isNaN(taskIdentifier)) {
-        task = await Task.findByPk(parseInt(taskIdentifier));
-      } else {
-        // Si es texto, buscar por título
-        task = await Task.findOne({
-          where: {
-            title: {
-              [Op.iLike]: `%${taskIdentifier}%`
-            }
-          }
-        });
-      }
-      
-      if (!task) {
-        return {
-          success: false,
-          error: 'No se encontró la tarea a actualizar'
-        };
-      }
-      
-      // Determinar qué campos actualizar
-      const updates = {};
-      
-      // Actualizar título si está especificado
-      const titleMatch = transcription.match(/cambiar (?:el )?título (?:a|por) ["']?([^"'.,]+)["']?/i);
-      if (titleMatch) {
-        updates.title = titleMatch[1].trim();
-      }
-      
-      // Actualizar estado si está especificado
-      if (lowercaseTranscription.includes('estado')) {
-        if (lowercaseTranscription.includes('pendiente')) updates.status = 'pending';
-        else if (lowercaseTranscription.includes('en progreso')) updates.status = 'in_progress';
-        else if (lowercaseTranscription.includes('completada')) updates.status = 'completed';
-        else if (lowercaseTranscription.includes('cancelada')) updates.status = 'cancelled';
-      } else {
-        // También detectar si se menciona directamente el estado sin la palabra "estado"
-        if (lowercaseTranscription.includes('a pendiente')) updates.status = 'pending';
-        else if (lowercaseTranscription.includes('a en progreso')) updates.status = 'in_progress';
-        else if (lowercaseTranscription.includes('a completada')) updates.status = 'completed';
-        else if (lowercaseTranscription.includes('a cancelada')) updates.status = 'cancelled';
-      }
-      
-      // Actualizar fecha si está especificada
-      if (lowercaseTranscription.includes('fecha')) {
-        let newDate = new Date();
-        
-        if (lowercaseTranscription.includes('mañana')) {
-          newDate.setDate(newDate.getDate() + 1);
-        } else if (lowercaseTranscription.includes('próxima semana')) {
-          newDate.setDate(newDate.getDate() + 7);
-        } else if (lowercaseTranscription.includes('próximo mes')) {
-          newDate.setMonth(newDate.getMonth() + 1);
-        }
-        
-        updates.completion_date = newDate.toISOString().split('T')[0];
-      }
-      
-      // Si no hay campos para actualizar, inferir del contexto
-      if (Object.keys(updates).length === 0) {
-        // Si se menciona "completada" o "completar", marcar como completada
-        if (lowercaseTranscription.includes('completada') || lowercaseTranscription.includes('completar')) {
-          updates.status = 'completed';
-        }
-        // Si se menciona "en progreso", cambiar estado
-        else if (lowercaseTranscription.includes('en progreso')) {
-          updates.status = 'in_progress';
-        }
-      }
-      
-      // Si sigue sin haber campos para actualizar, informar al usuario
-      if (Object.keys(updates).length === 0) {
-        return {
-          success: false,
-          error: 'No se identificaron campos para actualizar'
-        };
-      }
-      
-      logger.info(`Actualizando tarea ID ${task.id} con: ${JSON.stringify(updates)}`);
-      
-      // Actualizar la tarea
-      await task.update(updates);
-      
-      return {
-        success: true,
-        action: 'updateTask',
-        taskDetails: task.dataValues,
-        message: `He actualizado la tarea "${task.title}" correctamente.`
-      };
-    } catch (updateError) {
-      logger.error(`Error al actualizar tarea: ${updateError.message}`);
-      
-      return {
-        success: false,
-        error: `Error al actualizar la tarea: ${updateError.message}`
-      };
-    }
-  } catch (error) {
-    logger.error(`Error al procesar comando de actualización: ${error.message}`);
-    
-    return {
-      success: false,
-      error: `Error al procesar la solicitud: ${error.message}`
-    };
-  }
-}
-
-// Procesar un comando de asistencia general con información contextual
-async function processAssistanceCommand(transcription, projectsContext = [], tasksContext = []) {
-  // Respuestas predefinidas para preguntas comunes
+/**
+ * Extract task details using keyword analysis
+ */
+function extractTaskDetailsWithKeywords(transcription) {
   const lowercaseTranscription = transcription.toLowerCase();
   
-  // Respuestas específicas basadas en palabras clave
-  if (lowercaseTranscription.includes('hola') || lowercaseTranscription.includes('buenos días') || 
-      lowercaseTranscription.includes('buenas tardes') || lowercaseTranscription.includes('qué tal')) {
+  // Extract title
+  let title = "Nueva tarea";
+  const titleMatch = transcription.match(/(?:crear|nueva) tarea (?:llamada|titulada|con nombre|con título)? ?["']?([^"'.,]+)["']?/i);
+  
+  if (titleMatch) {
+    title = titleMatch[1].trim();
+  } else if (lowercaseTranscription.includes("crear tarea")) {
+    // Extract everything after "crear tarea"
+    const afterCreateMatch = transcription.match(/crear tarea (.+)/i);
+    if (afterCreateMatch) {
+      // Use first few words as title
+      const words = afterCreateMatch[1].split(' ');
+      if (words.length > 3) {
+        title = words.slice(0, 3).join(' ');
+      } else {
+        title = afterCreateMatch[1];
+      }
+    }
+  }
+  
+  // Extract status
+  let status = 'pending';
+  if (lowercaseTranscription.includes('en progreso')) status = 'in_progress';
+  else if (lowercaseTranscription.includes('completada')) status = 'completed';
+  else if (lowercaseTranscription.includes('cancelada')) status = 'cancelled';
+  
+  // Extract description
+  let description = null;
+  if (lowercaseTranscription.includes('para')) {
+    const descriptionMatch = transcription.match(/para (.+)$/i);
+    if (descriptionMatch) {
+      description = descriptionMatch[1].trim();
+    }
+  }
+  
+  // Extract completion date
+  let completionDate = null;
+  const today = new Date();
+  
+  if (lowercaseTranscription.includes('mañana')) {
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    completionDate = tomorrow.toISOString().split('T')[0];
+  } else if (lowercaseTranscription.includes('próxima semana')) {
+    const nextWeek = new Date(today);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    completionDate = nextWeek.toISOString().split('T')[0];
+  } else if (lowercaseTranscription.includes('próximo mes')) {
+    const nextMonth = new Date(today);
+    nextMonth.setMonth(nextMonth.getMonth() + 1);
+    completionDate = nextMonth.toISOString().split('T')[0];
+  } else {
+    // Default to one week from now
+    const oneWeek = new Date(today);
+    oneWeek.setDate(oneWeek.getDate() + 7);
+    completionDate = oneWeek.toISOString().split('T')[0];
+  }
+  
+  return {
+    title,
+    description,
+    status,
+    completion_date: completionDate
+  };
+}
+
+/**
+ * Process a command to create a project
+ */
+async function processCreateProjectCommand(transcription) {
+  logger.info(`Processing create project command: "${transcription}"`);
+  
+  try {
+    // Extract project details
+    let projectDetails;
+    
+    if (claude) {
+      try {
+        projectDetails = await extractProjectDetailsWithClaude(transcription);
+        logger.info(`Project details extracted with Claude: ${JSON.stringify(projectDetails)}`);
+      } catch (claudeError) {
+        logger.error(`Error extracting project details with Claude: ${claudeError.message}`);
+        projectDetails = extractProjectDetailsWithKeywords(transcription);
+      }
+    } else {
+      projectDetails = extractProjectDetailsWithKeywords(transcription);
+      logger.info(`Project details extracted with keywords: ${JSON.stringify(projectDetails)}`);
+    }
+    
+    // Check if a project with this title already exists
+    const existingProject = await Project.findOne({
+      where: {
+        title: projectDetails.title
+      }
+    });
+    
+    if (existingProject) {
+      logger.warn(`Project with title "${projectDetails.title}" already exists`);
+      return {
+        success: false,
+        error: `Ya existe un proyecto llamado "${projectDetails.title}"`
+      };
+    }
+    
+    // Create the project
+    const projectData = {
+      title: projectDetails.title || 'Nuevo proyecto',
+      description: projectDetails.description || 'Proyecto creado por comando de voz',
+      priority: projectDetails.priority || 'medium',
+      culmination_date: projectDetails.culmination_date || null,
+      creation_date: new Date()
+    };
+    
+    logger.info(`Creating project with data: ${JSON.stringify(projectData)}`);
+    
+    const newProject = await Project.create(projectData);
+    logger.info(`Project created successfully with ID: ${newProject.id}`);
+    
     return {
       success: true,
-      response: '¡Hola! Soy tu asistente virtual de SmartTask. ¿En qué puedo ayudarte hoy? Puedo crear tareas, buscar información o ayudarte a gestionar tus proyectos.'
+      action: 'createProject',
+      projectDetails: newProject.dataValues,
+      message: `He creado un nuevo proyecto: "${projectData.title}".`
+    };
+  } catch (error) {
+    logger.error(`Error creating project: ${error.message}`);
+    return {
+      success: false,
+      error: `Error al crear el proyecto: ${error.message}`
+    };
+  }
+}
+
+/**
+ * Extract project details using Claude
+ */
+async function extractProjectDetailsWithClaude(transcription) {
+  try {
+    const message = await claude.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 500,
+      temperature: 0.2,
+      system: `You're a project extraction specialist. Extract project details from voice commands.`,
+      messages: [
+        {
+          role: "user",
+          content: `Extract the following details from this voice command: "${transcription}"
+          
+          Return ONLY a JSON object with these fields:
+          - title: the project title (required)
+          - description: a description of the project (optional)
+          - priority: project priority (high, medium, low)
+          - culmination_date: deadline in YYYY-MM-DD format (optional)
+          
+          For fields not mentioned, use null. Return ONLY the JSON, nothing else.`
+        }
+      ]
+    });
+
+    // Extract the JSON from the response
+    const responseText = message.content[0].text.trim();
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    } else {
+      throw new Error('Could not extract JSON from Claude response');
+    }
+  } catch (error) {
+    logger.error(`Claude project extraction error: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Extract project details using keyword analysis
+ */
+function extractProjectDetailsWithKeywords(transcription) {
+  const lowercaseTranscription = transcription.toLowerCase();
+  
+  // Extract title
+  let title = "Nuevo proyecto";
+  const titleMatch = transcription.match(/(?:crear|nuevo) proyecto (?:llamado|titulado|con nombre|con título)? ?["']?([^"'.,]+)["']?/i);
+  
+  if (titleMatch) {
+    title = titleMatch[1].trim();
+  } else if (lowercaseTranscription.includes("crear proyecto")) {
+    // Extract everything after "crear proyecto"
+    const afterCreateMatch = transcription.match(/crear proyecto (.+)/i);
+    if (afterCreateMatch) {
+      // Use first few words as title
+      const words = afterCreateMatch[1].split(' ');
+      if (words.length > 3) {
+        title = words.slice(0, 3).join(' ');
+      } else {
+        title = afterCreateMatch[1];
+      }
+    }
+  }
+  
+  // Extract priority
+  let priority = 'medium';
+  if (lowercaseTranscription.includes('prioridad alta') || 
+      lowercaseTranscription.includes('alta prioridad') || 
+      lowercaseTranscription.includes('urgente')) {
+    priority = 'high';
+  } else if (lowercaseTranscription.includes('prioridad baja') || 
+             lowercaseTranscription.includes('baja prioridad')) {
+    priority = 'low';
+  }
+  
+  // Extract description
+  let description = null;
+  if (lowercaseTranscription.includes('para')) {
+    const descriptionMatch = transcription.match(/para (.+)$/i);
+    if (descriptionMatch) {
+      description = descriptionMatch[1].trim();
+    }
+  }
+  
+  return {
+    title,
+    description,
+    priority,
+    culmination_date: null
+  };
+}
+
+/**
+ * Process a command to search for tasks
+ */
+async function processSearchTaskCommand(transcription, projectId) {
+  logger.info(`Processing search task command: "${transcription}"`);
+  
+  try {
+    // Extract search parameters
+    let searchParams;
+    
+    if (claude) {
+      try {
+        searchParams = await extractSearchParamsWithClaude(transcription);
+        logger.info(`Search parameters extracted with Claude: ${JSON.stringify(searchParams)}`);
+      } catch (claudeError) {
+        logger.error(`Error extracting search parameters with Claude: ${claudeError.message}`);
+        searchParams = extractSearchParamsWithKeywords(transcription);
+      }
+    } else {
+      searchParams = extractSearchParamsWithKeywords(transcription);
+      logger.info(`Search parameters extracted with keywords: ${JSON.stringify(searchParams)}`);
+    }
+    
+    // Construct the query
+    const whereClause = {};
+    
+    if (searchParams.searchTerm) {
+      whereClause[Op.or] = [
+        { title: { [Op.iLike]: `%${searchParams.searchTerm}%` } },
+        { description: { [Op.iLike]: `%${searchParams.searchTerm}%` } }
+      ];
+    }
+    
+    if (searchParams.status) {
+      whereClause.status = searchParams.status;
+    }
+    
+    if (projectId) {
+      whereClause.projectId = projectId;
+    } else if (searchParams.projectId) {
+      whereClause.projectId = searchParams.projectId;
+    }
+    
+    logger.info(`Searching tasks with criteria: ${JSON.stringify(whereClause)}`);
+    
+    // Perform the search
+    const tasks = await Task.findAll({
+      where: whereClause,
+      include: [
+        {
+          model: Project,
+          attributes: ['id', 'title']
+        }
+      ]
+    });
+    
+    logger.info(`Found ${tasks.length} tasks matching criteria`);
+    
+    // Format results
+    const searchResults = tasks.map(task => ({
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      status: task.status,
+      completion_date: task.completion_date,
+      projectName: task.Project ? task.Project.title : 'Unknown'
+    }));
+    
+    return {
+      success: true,
+      action: 'searchTasks',
+      searchParams,
+      searchResults,
+      message: `He encontrado ${searchResults.length} tareas que coinciden con tu búsqueda.`
+    };
+  } catch (error) {
+    logger.error(`Error searching tasks: ${error.message}`);
+    return {
+      success: false,
+      error: `Error al buscar tareas: ${error.message}`
+    };
+  }
+}
+
+/**
+ * Extract search parameters using Claude
+ */
+async function extractSearchParamsWithClaude(transcription) {
+  try {
+    const message = await claude.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 500,
+      temperature: 0.2,
+      system: `You're a search parameter extraction specialist for a task management system.`,
+      messages: [
+        {
+          role: "user",
+          content: `Extract search parameters from this voice command: "${transcription}"
+          
+          Return ONLY a JSON object with these fields:
+          - searchTerm: keywords to search for in title or description
+          - status: task status (in_progress, completed, pending, cancelled)
+          - projectId: project ID if mentioned (null if not)
+          
+          For any parameters not mentioned, use null. Return ONLY the JSON, nothing else.`
+        }
+      ]
+    });
+
+    // Extract the JSON from the response
+    const responseText = message.content[0].text.trim();
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    } else {
+      throw new Error('Could not extract JSON from Claude response');
+    }
+  } catch (error) {
+    logger.error(`Claude search parameter extraction error: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Extract search parameters using keyword analysis
+ */
+function extractSearchParamsWithKeywords(transcription) {
+  const lowercaseTranscription = transcription.toLowerCase();
+  
+  // Extract search term
+  let searchTerm = null;
+  const searchMatch = transcription.match(/(?:buscar|encontrar|mostrar|listar) (?:tareas? (?:sobre|de|con|relacionadas))? ?["']?([^"'.,]+)["']?/i);
+  
+  if (searchMatch) {
+    searchTerm = searchMatch[1].trim();
+  }
+  
+  // Extract status
+  let status = null;
+  if (lowercaseTranscription.includes('pendiente')) status = 'pending';
+  else if (lowercaseTranscription.includes('en progreso')) status = 'in_progress';
+  else if (lowercaseTranscription.includes('completada')) status = 'completed';
+  else if (lowercaseTranscription.includes('cancelada')) status = 'cancelled';
+  
+  return {
+    searchTerm,
+    status,
+    projectId: null
+  };
+}
+
+/**
+ * Process a command to update a task
+ */
+async function processUpdateTaskCommand(transcription) {
+  logger.info(`Processing update task command: "${transcription}"`);
+  
+  try {
+    // Extract update details
+    let updateDetails;
+    
+    if (claude) {
+      try {
+        updateDetails = await extractUpdateDetailsWithClaude(transcription);
+        logger.info(`Update details extracted with Claude: ${JSON.stringify(updateDetails)}`);
+      } catch (claudeError) {
+        logger.error(`Error extracting update details with Claude: ${claudeError.message}`);
+        updateDetails = extractUpdateDetailsWithKeywords(transcription);
+      }
+    } else {
+      updateDetails = extractUpdateDetailsWithKeywords(transcription);
+      logger.info(`Update details extracted with keywords: ${JSON.stringify(updateDetails)}`);
+    }
+    
+    if (!updateDetails.taskIdentifier) {
+      logger.error('No task identifier found in command');
+      return {
+        success: false,
+        error: 'No se pudo identificar qué tarea deseas actualizar.'
+      };
+    }
+    
+    // Find the task to update
+    let task;
+    
+    if (!isNaN(updateDetails.taskIdentifier)) {
+      // If identifier is a number, search by ID
+      task = await Task.findByPk(parseInt(updateDetails.taskIdentifier));
+    } else {
+      // Otherwise search by title
+      task = await Task.findOne({
+        where: {
+          title: {
+            [Op.iLike]: `%${updateDetails.taskIdentifier}%`
+          }
+        }
+      });
+    }
+    
+    if (!task) {
+      logger.error(`No task found matching identifier: ${updateDetails.taskIdentifier}`);
+      return {
+        success: false,
+        error: `No se encontró ninguna tarea que coincida con "${updateDetails.taskIdentifier}".`
+      };
+    }
+    
+    // Ensure we have updates to apply
+    if (!updateDetails.updates || Object.keys(updateDetails.updates).length === 0) {
+      logger.error('No updates specified in command');
+      return {
+        success: false,
+        error: 'No se especificaron cambios para actualizar la tarea.'
+      };
+    }
+    
+    logger.info(`Updating task ${task.id} with: ${JSON.stringify(updateDetails.updates)}`);
+    
+    // Apply the updates
+    await task.update(updateDetails.updates);
+    
+    // Get the updated task
+    const updatedTask = await Task.findByPk(task.id, {
+      include: [
+        {
+          model: Project,
+          attributes: ['id', 'title']
+        }
+      ]
+    });
+    
+    return {
+      success: true,
+      action: 'updateTask',
+      taskDetails: {
+        id: updatedTask.id,
+        title: updatedTask.title,
+        description: updatedTask.description,
+        status: updatedTask.status,
+        completion_date: updatedTask.completion_date,
+        projectName: updatedTask.Project ? updatedTask.Project.title : 'Unknown'
+      },
+      message: `He actualizado la tarea "${updatedTask.title}" correctamente.`
+    };
+  } catch (error) {
+    logger.error(`Error updating task: ${error.message}`);
+    return {
+      success: false,
+      error: `Error al actualizar la tarea: ${error.message}`
+    };
+  }
+}
+
+/**
+ * Extract update details using Claude
+ */
+async function extractUpdateDetailsWithClaude(transcription) {
+  try {
+    const message = await claude.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 500,
+      temperature: 0.2,
+      system: `You're a task update specialist. Extract update details from voice commands.`,
+      messages: [
+        {
+          role: "user",
+          content: `Extract the following details from this voice command: "${transcription}"
+          
+          Return ONLY a JSON object with these fields:
+          - taskIdentifier: words identifying which task to update
+          - updates: an object containing fields to update, which may include:
+            - title: new title 
+            - description: new description
+            - status: new status (in_progress, completed, pending, cancelled)
+            - completion_date: new deadline in YYYY-MM-DD format
+          
+          Only include fields in 'updates' that should actually change.
+          If "en progreso" is mentioned, use "in_progress" for status.
+          Return ONLY the JSON, nothing else.`
+        }
+      ]
+    });
+
+    // Extract the JSON from the response
+    const responseText = message.content[0].text.trim();
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    } else {
+      throw new Error('Could not extract JSON from Claude response');
+    }
+  } catch (error) {
+    logger.error(`Claude update extraction error: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Extract update details using keyword analysis
+ */
+function extractUpdateDetailsWithKeywords(transcription) {
+  const lowercaseTranscription = transcription.toLowerCase();
+  
+  // Extract task identifier
+  let taskIdentifier = null;
+  const taskMatch = transcription.match(/(?:actualizar|modificar|cambiar) (?:la )?tarea (?:llamada |titulada |con nombre |con título )?["']?([^"'.,]+)["']?/i);
+  
+  if (taskMatch) {
+    taskIdentifier = taskMatch[1].trim();
+  }
+  
+  // Extract updates
+  const updates = {};
+  
+  // Update status
+  if (lowercaseTranscription.includes('a pendiente') || 
+      lowercaseTranscription.includes('estado pendiente')) {
+    updates.status = 'pending';
+  } else if (lowercaseTranscription.includes('a en progreso') || 
+             lowercaseTranscription.includes('estado en progreso')) {
+    updates.status = 'in_progress';
+  } else if (lowercaseTranscription.includes('a completada') || 
+             lowercaseTranscription.includes('estado completada') ||
+             lowercaseTranscription.includes('como completada') ||
+             lowercaseTranscription.includes('marcar como completada')) {
+    updates.status = 'completed';
+  } else if (lowercaseTranscription.includes('a cancelada') || 
+             lowercaseTranscription.includes('estado cancelada')) {
+    updates.status = 'cancelled';
+  }
+  
+  // Update title
+  const titleMatch = transcription.match(/(?:cambiar|actualizar) (?:el )?título (?:a|por) ["']?([^"'.,]+)["']?/i);
+  if (titleMatch) {
+    updates.title = titleMatch[1].trim();
+  }
+  
+  // Update date
+  if (lowercaseTranscription.includes('fecha')) {
+    let newDate = new Date();
+    
+    if (lowercaseTranscription.includes('mañana')) {
+      newDate.setDate(newDate.getDate() + 1);
+    } else if (lowercaseTranscription.includes('próxima semana')) {
+      newDate.setDate(newDate.getDate() + 7);
+    } else if (lowercaseTranscription.includes('próximo mes')) {
+      newDate.setMonth(newDate.getMonth() + 1);
+    }
+    
+    updates.completion_date = newDate.toISOString().split('T')[0];
+  }
+  
+  return {
+    taskIdentifier,
+    updates
+  };
+}
+
+/**
+ * Process a command to count tasks
+ */
+async function processCountTasksCommand() {
+  logger.info('Processing count tasks command');
+  
+  try {
+    // Count all tasks
+    const taskCount = await Task.count();
+    logger.info(`Total task count: ${taskCount}`);
+    
+    return {
+      success: true,
+      response: `Actualmente tienes ${taskCount} tareas en total en el sistema.`
+    };
+  } catch (error) {
+    logger.error(`Error counting tasks: ${error.message}`);
+    return {
+      success: false,
+      error: `Error al contar tareas: ${error.message}`
+    };
+  }
+}
+
+/**
+ * Process a general assistance command
+ */
+async function processAssistanceCommand(transcription) {
+  logger.info(`Processing assistance command: "${transcription}"`);
+  
+  const lowercaseTranscription = transcription.toLowerCase();
+  
+  // Check for specific assistance requests
+  if (lowercaseTranscription.includes('hola') || 
+      lowercaseTranscription.includes('buenos días') || 
+      lowercaseTranscription.includes('buenas tardes') || 
+      lowercaseTranscription.includes('buenas noches')) {
+    return {
+      success: true,
+      response: '¡Hola! Soy tu asistente virtual de SmartTask. ¿En qué puedo ayudarte hoy?'
     };
   }
   
-  if (lowercaseTranscription.includes('ayuda') || lowercaseTranscription.includes('qué puedes hacer')) {
+  if (lowercaseTranscription.includes('ayuda') || 
+      lowercaseTranscription.includes('qué puedes hacer')) {
     return {
       success: true,
-      response: 'Puedo ayudarte a gestionar tus tareas y proyectos. Algunos comandos que puedes usar son: "crear tarea", "crear proyecto", "buscar tareas", "actualizar tarea". También puedes preguntarme sobre el estado de tus proyectos.'
+      response: 'Puedo ayudarte con varias tareas. Puedes pedirme crear tareas o proyectos, buscar tareas, actualizar tareas existentes, o contar el número de tareas que tienes.'
     };
   }
   
@@ -1202,35 +981,58 @@ async function processAssistanceCommand(transcription, projectsContext = [], tas
     };
   }
   
-  if (lowercaseTranscription.includes('cuántas tareas') || lowercaseTranscription.includes('número de tareas')) {
+  // Use Claude for more complex assistance if available
+  if (claude) {
     try {
-      const taskCount = await Task.count();
-      return {
-        success: true,
-        response: `Actualmente tienes ${taskCount} tareas en total en el sistema.`
-      };
-    } catch (error) {
-      logger.error(`Error al contar tareas: ${error.message}`);
+      return await getAssistanceWithClaude(transcription);
+    } catch (claudeError) {
+      logger.error(`Error getting assistance with Claude: ${claudeError.message}`);
     }
   }
   
-  if (lowercaseTranscription.includes('cuántos proyectos') || lowercaseTranscription.includes('número de proyectos')) {
-    try {
-      const projectCount = await Project.count();
-      return {
-        success: true,
-        response: `Actualmente tienes ${projectCount} proyectos en el sistema.`
-      };
-    } catch (error) {
-      logger.error(`Error al contar proyectos: ${error.message}`);
-    }
-  }
-  
-  // Respuesta general por defecto
+  // Default response
   return {
     success: true,
     response: '¿En qué puedo ayudarte? Puedo asistirte con la creación de tareas y proyectos, o ayudarte a buscar información en tu sistema de gestión de tareas.'
   };
 }
 
+/**
+ * Get assistance response using Claude
+ */
+async function getAssistanceWithClaude(transcription) {
+  try {
+    const message = await claude.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 300,
+      temperature: 0.7,
+      system: `You're a helpful assistant for a task management application called SmartTask. 
+      The app allows users to:
+      - Create and manage projects with titles, descriptions, dates, and priorities
+      - Create and manage tasks within projects
+      - Search for tasks by various criteria
+      - Update task details
+      
+      Keep your responses friendly, helpful, and concise (2-4 sentences max).`,
+      messages: [
+        {
+          role: "user",
+          content: `The user has asked: "${transcription}"
+          
+          Provide a helpful response without technical jargon. Don't mention that you're an AI.`
+        }
+      ]
+    });
+
+    return {
+      success: true,
+      response: message.content[0].text.trim()
+    };
+  } catch (error) {
+    logger.error(`Claude assistance error: ${error.message}`);
+    throw error;
+  }
+}
+
+// Export the router
 module.exports = router;
