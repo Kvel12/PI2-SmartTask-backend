@@ -11,10 +11,11 @@ const winston = require('winston');
 const { Task, Project } = require('../models');
 const { Op } = require('sequelize');
 
-// Configurar logger
-const logger = winston.createLogger({
+// Configurar sistema de logs
+const logger = winston.createLogger({ 
+  // Configuración del logger
   level: 'info',
-  format: winston.format.combine(
+  format: winston.format.combine( // eslint-disable-line
     winston.format.timestamp(),
     winston.format.json()
   ),
@@ -25,7 +26,8 @@ const logger = winston.createLogger({
   ]
 });
 
-// Inicializar OpenAI (apuntando a Claude)
+// Inicializa el cliente de Claude utilizando el SDK de OpenAI
+
 let openaiClient;
 try {
   if (process.env.CLAUDE_API_KEY) {
@@ -41,7 +43,8 @@ try {
   logger.error(`Error al inicializar cliente de Claude: ${error.message}`);
 }
 
-// Configurar Google Speech-to-Text
+// Inicializar el cliente de Google Speech-to-Text
+
 let speechClient;
 try {
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
@@ -56,7 +59,7 @@ try {
   logger.error('Error al configurar Google Speech-to-Text:', error);
 }
 
-// Asegurarse de que exista el directorio de uploads
+// Crea el directorio para almacenar los archivos de audio subidos
 const uploadDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadDir)) {
   try {
@@ -69,20 +72,25 @@ if (!fs.existsSync(uploadDir)) {
 
 // Configuración de multer para manejar archivos de audio
 const storage = multer.diskStorage({
+  // Define la ubicación donde se guardarán los archivos
   destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
+  // Define el nombre que se usará para el archivo subido
   filename: (req, file, cb) => {
     const extension = file.originalname.split('.').pop();
     cb(null, `${uuidv4()}.${extension}`);
   }
 });
 
+// Configuración de Multer para gestionar subida de archivos de audio
 const upload = multer({
   storage,
   limits: {
     fileSize: 10 * 1024 * 1024, // Límite de 10MB
   },
+
+  // Filtra los tipos de archivos permitido
   fileFilter: (req, file, cb) => {
     // Validar el tipo de archivo
     const allowedMimeTypes = ['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mpeg', 'audio/mp3'];
@@ -114,7 +122,7 @@ router.post('/speech-to-text', auth, upload.single('audio'), async (req, res) =>
     // Leer el archivo de audio
     const audioBytes = fs.readFileSync(req.file.path).toString('base64');
     
-    // Determinar el encoding basado en el tipo de archivo
+    // Determinar el encoding basado en el tipo MIME del archivo
     let encoding;
     switch (req.file.mimetype) {
       case 'audio/webm':
@@ -188,7 +196,7 @@ router.post('/speech-to-text', auth, upload.single('audio'), async (req, res) =>
   }
 });
 
-// Endpoint para procesar texto transcrito
+// Endpoint para finalizar la llamada a la API de Google Speech-to-Text y procesa los resultados
 router.post('/process-voice-text', auth, async (req, res) => {
   const { transcription, commandType, projectId } = req.body;
   
@@ -233,6 +241,7 @@ router.post('/process-voice-text', auth, async (req, res) => {
       const countTasksRegex = /\b(cuantas|cuántas|numero|número|total\s+de)\s+(tareas|actividades)\b/i;
       const countProjectsRegex = /\b(cuantos|cuántos|numero|número|total\s+de)\s+(proyectos)\b/i;
       
+      // Detectar el tipo de comando basado en las expresiones regulares
       if (createTaskRegex.test(normalizedText)) {
         detectedCommandType = 'createTask';
         logger.info('Command type detected via regex: createTask');
@@ -266,6 +275,7 @@ router.post('/process-voice-text', auth, async (req, res) => {
             normalizedText.includes('agrega'))) {
           detectedCommandType = 'createTask';
           logger.info('Command type detected via keywords: createTask');
+          // Añadir este patrón adicional para comandos relacionados con el sistema  
         } else if (normalizedText.includes('proyecto') && (
             normalizedText.includes('crea') || 
             normalizedText.includes('crear') || 
@@ -273,14 +283,17 @@ router.post('/process-voice-text', auth, async (req, res) => {
             normalizedText.includes('agrega'))) {
           detectedCommandType = 'createProject';
           logger.info('Command type detected via keywords: createProject');
+          // Añadir este patrón adicional para comandos relacionados con el sistema
         } else if ((normalizedText.includes('buscar') || normalizedText.includes('encontrar')) && 
                   normalizedText.includes('tarea')) {
           detectedCommandType = 'searchTask';
           logger.info('Command type detected via keywords: searchTask');
+          // Añadir este patrón adicional para comandos relacionados con el sistema
         } else if ((normalizedText.includes('buscar') || normalizedText.includes('encontrar')) && 
                   normalizedText.includes('proyecto')) {
           detectedCommandType = 'searchProject';
           logger.info('Command type detected via keywords: searchProject');
+        
         } else if (normalizedText.includes('cambiar') || normalizedText.includes('actualizar') || 
                    normalizedText.includes('cambia') || normalizedText.includes('editar') || 
                    normalizedText.includes('edita') || normalizedText.includes('modificar')) {
@@ -302,6 +315,7 @@ router.post('/process-voice-text', auth, async (req, res) => {
             } else if (normalizedText.includes('proyectos')) {
                 detectedCommandType = 'countProjects';
             }
+        
         }else if (normalizedText.includes('cuantas') && normalizedText.includes('tareas')) {
           detectedCommandType = 'countTasks';
           logger.info('Command type detected via keywords: countTasks');
@@ -344,7 +358,6 @@ router.post('/process-voice-text', auth, async (req, res) => {
     
     // Procesar el comando según su tipo
     let response;
-    
     switch (detectedCommandType) {
       case 'createTask':
         response = await processCreateTaskCommand(transcription, projectId, projects);
@@ -550,7 +563,7 @@ async function processCreateTaskCommand(transcription, projectId, projects = [])
 
 // Extraer detalles de tarea del texto - MEJORADO
 async function extractTaskDetails(transcription) {
-  try {
+  try { 
     if (openaiClient) {
       try {
         // Usar OpenAI/Claude para extraer detalles con prompt mejorado
@@ -586,7 +599,7 @@ async function extractTaskDetails(transcription) {
           max_tokens: 300,
         });
     
-        // Extraer y analizar la respuesta
+        // Extraer y analizar la respuesta 
         const responseContent = completion.choices[0].message.content;
         
         // Intentar extraer el JSON de la respuesta
@@ -648,7 +661,7 @@ async function extractTaskDetails(transcription) {
       }
     }
     
-    // Extraer estado
+    // Extraer estado del
     let status = 'pending'; // Valor predeterminado
     if (lowercaseText.includes('en progreso') || lowercaseText.includes('iniciada')) {
       status = 'in_progress';
@@ -688,7 +701,7 @@ async function extractTaskDetails(transcription) {
       }
     }
     
-    // Extraer fecha de finalización
+    // Extraer fecha de finalización 
     let completionDate = null;
     const today = new Date();
     
@@ -714,7 +727,7 @@ async function extractTaskDetails(transcription) {
         const month = parseInt(dateMatch[2]) - 1; // Meses en JS son 0-11
         let year = dateMatch[3] ? parseInt(dateMatch[3]) : today.getFullYear();
         
-        // Ajustar año si se proporcionó en formato corto
+        // Ajustar el año si se proporcionó en formato corto
         if (year < 100) {
           year += year < 50 ? 2000 : 1900;
         }
@@ -729,7 +742,7 @@ async function extractTaskDetails(transcription) {
         completionDate = oneWeek.toISOString().split('T')[0];
       }
     }
-    
+    // Devolver valores
     return {
       title,
       description,
@@ -778,7 +791,7 @@ async function processCreateProjectCommand(transcription) {
       }
     }
     
-    // Verificar si ya existe un proyecto con este título
+    // Verificar ya existe un proyecto con este título
     const existingProject = await Project.findOne({
       where: {
         title: {
@@ -801,12 +814,12 @@ async function processCreateProjectCommand(transcription) {
       projectDetails.description = `Proyecto para gestionar actividades relacionadas con ${projectDetails.title.toLowerCase()}.`;
     }
     
-    // Asegurarnos de tener una prioridad válida
+    // Asegurarse de tener una prioridad válida
     if (!projectDetails.priority) {
       projectDetails.priority = 'medium';
     }
     
-    // Crear el proyecto
+    // Crear proyecto
     const projectData = {
       title: projectDetails.title,
       description: projectDetails.description,
@@ -820,7 +833,7 @@ async function processCreateProjectCommand(transcription) {
     const newProject = await Project.create(projectData);
     logger.info(`Proyecto creado con éxito con ID: ${newProject.id}`);
     
-    // Generar un mensaje de respuesta claro y orientado a la acción
+    // Generar mensaje de respuesta claro y orientado a la acción
     let responseMessage = `He creado el proyecto "${projectData.title}" con prioridad ${projectData.priority}.`;
     
     if (projectData.culmination_date) {
@@ -844,7 +857,7 @@ async function processCreateProjectCommand(transcription) {
   }
 }
 
-// Extraer detalles de proyecto del texto - MEJORADO
+// Extraer detalles de proyecto del texto 
 async function extractProjectDetails(transcription) {
   try {
     if (openaiClient) {
@@ -898,10 +911,10 @@ async function extractProjectDetails(transcription) {
       }
     }
     
-    // Extracción basada en palabras clave (fallback mejorado)
+    // Extracción basada en palabras clave
     const lowercaseText = transcription.toLowerCase();
     
-    // Extraer título
+    // Extraer título 
     let title = null;
     const titlePatterns = [
       /(?:proyecto|plan)\s+(?:llamado|titulado|que se llama|con nombre|con título)\s+["']?([^"'.,]+)["']?/i,
@@ -1061,7 +1074,7 @@ async function processSearchTaskCommand(transcription, projectId) {
     
     logger.info(`Buscando tareas con criterios: ${JSON.stringify(whereClause)}`);
     
-    // Ejecutar la búsqueda
+    // Ejecutar búsqueda
     const tasks = await Task.findAll({
       where: whereClause,
       include: [
@@ -1232,7 +1245,7 @@ async function processSearchProjectCommand(transcription) {
   }
 }
 
-// Extraer parámetros de búsqueda del texto - MEJORADO
+// Extraer parámetros de búsqueda del texto 
 async function extractSearchParams(transcription, projectId) {
   try {
     if (openaiClient) {
@@ -1291,7 +1304,7 @@ async function extractSearchParams(transcription, projectId) {
     // Extracción basada en palabras clave (fallback mejorado)
     const lowercaseText = transcription.toLowerCase();
     
-    // Extraer término de búsqueda
+    // Extraer el término de búsqueda
     let searchTerm = null;
     const keywords = [
       'buscar', 'encontrar', 'mostrar', 'listar', 'ver', 
@@ -1341,7 +1354,7 @@ async function extractSearchParams(transcription, projectId) {
   }
 }
 
-// Procesador de comando para actualizar tarea - MEJORADO
+// Procesador de comando para actualizar tarea
 async function processUpdateTaskCommand(transcription, projects = []) {
   logger.info(`Processing update task command: "${transcription}"`);
   
@@ -1465,7 +1478,7 @@ async function processUpdateTaskCommand(transcription, projects = []) {
               const taskTitle = possibleTask.title.toLowerCase();
               const taskIdentifier = updateDetails.taskIdentifier.toLowerCase();
               
-              // Contar cuántas palabras del identificador aparecen en el título
+              // Contar palabras del identificador que aparecen en el título
               let matchCount = 0;
               for (const word of keywords) {
                 if (taskTitle.includes(word.toLowerCase())) {
@@ -1556,7 +1569,7 @@ async function processUpdateTaskCommand(transcription, projects = []) {
     
     logger.info(`Actualizando tarea ${task.id} con: ${JSON.stringify(updateDetails.updates)}`);
     
-    // Guardar estado anterior para el mensaje
+    // Guardar estado anterior del mensaje
     const oldStatus = task.status;
     
     // Aplicar las actualizaciones
@@ -1583,7 +1596,7 @@ async function processUpdateTaskCommand(transcription, projects = []) {
     if (updateDetails.updates.description) {
       responseMessage += `, actualizando su descripción`;
     }
-    
+  
     if (updateDetails.updates.completion_date) {
       responseMessage += `, estableciendo su fecha límite para el ${updateDetails.updates.completion_date}`;
     }
@@ -1612,7 +1625,7 @@ async function processUpdateTaskCommand(transcription, projects = []) {
   }
 }
 
-// Procesador para actualizar proyectos - MEJORADO
+// Procesador para actualizar proyectos
 async function processUpdateProjectCommand(transcription) {
     logger.info(`Processing update project command: "${transcription}"`);
     
@@ -1658,7 +1671,7 @@ async function processUpdateProjectCommand(transcription) {
         };
       }
       
-      // MEJORA 2: Detectar las actualizaciones a realizar con patrones más flexibles
+      // Detectar las actualizaciones a realizar con patrones más flexibles
       
       // Detectar cambio de prioridad
       if (lowercaseText.includes('prioridad') || lowercaseText.includes('probabilidad')) {
@@ -1672,7 +1685,7 @@ async function processUpdateProjectCommand(transcription) {
         }
       }
       
-      // MEJORA 3: Detectar cambio de título con patrones más flexibles
+      // Detectar cambio de título con patrones más flexibles
       if (lowercaseText.includes('título') || lowercaseText.includes('titulo') || 
           lowercaseText.includes('nombre')) {
         // Buscar después de "a", "por", "como"
@@ -1744,7 +1757,7 @@ async function processUpdateProjectCommand(transcription) {
         }
       }
       
-      // MEJORA 4: Si no hay actualizaciones pero el comando sugiere cambiar título,
+      // Si no hay actualizaciones pero el comando sugiere cambiar título,
       // asumir que la parte después de "a" es el nuevo título
       if (Object.keys(updates).length === 0 && 
           (lowercaseText.includes('cambiar') || 
@@ -2057,7 +2070,7 @@ async function extractUpdateDetails(transcription) {
   }
 }
 
-// Procesador de comando para contar tareas - MEJORADO
+// Procesador de comando para contar tareas 
 async function processCountTasksCommand() {
   logger.info('Processing count tasks command');
   
@@ -2145,7 +2158,7 @@ async function processCountTasksCommand() {
   }
 }
 
-// Procesador de comando para contar proyectos - MEJORADO
+// Procesador de comando para contar proyectos 
 async function processCountProjectsCommand() {
   logger.info('Processing count projects command');
   
@@ -2202,7 +2215,7 @@ async function processCountProjectsCommand() {
   }
 }
 
-// Procesador de comando de asistencia general - MEJORADO
+// Procesador de comando de asistencia general
 async function processAssistanceCommand(transcription, projects = []) {
   logger.info(`Processing assistance command: "${transcription}"`);
   
