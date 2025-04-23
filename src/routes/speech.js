@@ -823,12 +823,15 @@ async function processCreateProjectCommand(transcription) {
     // Generar un mensaje de respuesta claro y orientado a la acción
     let responseMessage = `He creado el proyecto "${projectData.title}" con prioridad ${projectData.priority}.`;
     
+    // Añadir información sobre la fecha de finalización si está disponible
     if (projectData.culmination_date) {
       responseMessage += ` La fecha de finalización está establecida para el ${projectData.culmination_date}.`;
     }
     
+    // Sugerir al usuario que puede comenzar a añadir tareas al proyecto
     responseMessage += ` Ya puedes empezar a añadir tareas a este proyecto.`;
     
+    // Devolver el resultado exitoso con los detalles del proyecto creado
     return {
       success: true,
       action: 'createProject',
@@ -1044,6 +1047,7 @@ async function processSearchTaskCommand(transcription, projectId) {
     // Construir la consulta
     const whereClause = {};
     
+    // Si se especifica un término de búsqueda, agregarlo a la cláusula WHERE
     if (searchParams.searchTerm) {
       whereClause[Op.or] = [
         { title: { [Op.iLike]: `%${searchParams.searchTerm}%` } },
@@ -1051,10 +1055,12 @@ async function processSearchTaskCommand(transcription, projectId) {
       ];
     }
     
+    // Si se especifica un estado, agregarlo a la cláusula WHERE
     if (searchParams.status) {
       whereClause.status = searchParams.status;
     }
     
+    // Si se especifica un ID de proyecto, agregarlo a la cláusula WHERE
     if (searchParams.projectId) {
       whereClause.projectId = searchParams.projectId;
     }
@@ -1088,19 +1094,25 @@ async function processSearchTaskCommand(transcription, projectId) {
     // Generar mensaje de respuesta claro
     let responseMessage;
     
+    // Si no se encontraron resultados, generar un mensaje adecuado
     if (searchResults.length === 0) {
       if (searchParams.searchTerm) {
+        // No se encontraron tareas relacionadas con el término de búsqueda
         responseMessage = `No encontré ninguna tarea relacionada con "${searchParams.searchTerm}". ¿Quieres probar con otros términos de búsqueda?`;
       } else {
+        // No se encontraron tareas con los criterios proporcionados
         responseMessage = `No encontré ninguna tarea que coincida con tu búsqueda. Intenta con otros criterios o crea nuevas tareas.`;
       }
     } else {
+      // Si se encontraron resultados, generar un mensaje con los detalles
       responseMessage = `He encontrado ${searchResults.length} tarea${searchResults.length === 1 ? '' : 's'}`;
       
+      // Incluir el término de búsqueda en el mensaje si está disponible
       if (searchParams.searchTerm) {
         responseMessage += ` relacionada${searchResults.length === 1 ? '' : 's'} con "${searchParams.searchTerm}"`;
       }
       
+      // Incluir el estado en el mensaje si está disponible
       if (searchParams.status) {
         const statusText = {
           'pending': 'pendiente',
@@ -1122,6 +1134,7 @@ async function processSearchTaskCommand(transcription, projectId) {
       }
       
       if (searchResults.length > summaryCount) {
+        // Indicar que hay más tareas que las mostradas en el resumen
         responseMessage += `\n...y ${searchResults.length - summaryCount} más.`;
       }
     }
@@ -1134,6 +1147,7 @@ async function processSearchTaskCommand(transcription, projectId) {
       response: responseMessage
     };
   } catch (error) {
+    // Manejar errores durante la búsqueda de tareas
     logger.error(`Error al buscar tareas: ${error.message}`);
     return {
       success: false,
