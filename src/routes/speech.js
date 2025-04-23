@@ -1,9 +1,8 @@
-// routes/speech.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const speech = require('@google-cloud/speech');
-const { OpenAI } = require('openai');
+const { Anthropic } = require('@anthropic-ai/sdk');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -80,19 +79,19 @@ try {
   logger.error('Error al configurar Google Speech-to-Text:', error);
 }
 
-// Configurar el cliente de OpenAI
-let openai;
+// Configurar el cliente de Claude (Anthropic)
+let claude;
 try {
-  if (process.env.OPENAI_API_KEY) {
-    openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+  if (process.env.CLAUDE_API_KEY) {
+    claude = new Anthropic({
+      apiKey: process.env.CLAUDE_API_KEY,
     });
-    logger.info('Cliente OpenAI inicializado correctamente');
+    logger.info('Cliente Claude API inicializado correctamente');
   } else {
-    logger.error('Variable de entorno OPENAI_API_KEY no configurada');
+    logger.error('Variable de entorno CLAUDE_API_KEY no configurada');
   }
 } catch (error) {
-  logger.error('Error al configurar OpenAI:', error);
+  logger.error('Error al configurar Claude API:', error);
 }
 
 // Endpoint para convertir audio a texto
@@ -110,8 +109,6 @@ router.post('/speech-to-text', auth, upload.single('audio'), async (req, res) =>
         logger.error('No se recibió ningún archivo de audio');
         return res.status(400).json({ error: 'No se recibió ningún archivo de audio' });
     }
-
-    logger.info(`Archivo recibido: ${req.file.filename}, tipo: ${req.file.mimetype}, tamaño: ${req.file.size} bytes`);
 
     logger.info(`Archivo recibido: ${req.file.filename}, tipo: ${req.file.mimetype}, tamaño: ${req.file.size} bytes`);
 
@@ -204,9 +201,9 @@ router.post('/process-voice-command', auth, async (req, res) => {
   try {
     logger.info(`Procesando comando de voz: "${transcription}"`);
     
-    // Si OpenAI no está disponible, usar enfoque basado en palabras clave
-    if (!openai) {
-      logger.warn('OpenAI no está configurado. Usando enfoque basado en palabras clave');
+    // Si Claude no está disponible, usar enfoque basado en palabras clave
+    if (!claude) {
+      logger.warn('Claude no está configurado. Usando enfoque basado en palabras clave');
       return processWithKeywords(transcription, commandType, projectId, res);
     }
 
@@ -349,7 +346,7 @@ router.post('/process-voice-text', auth, async (req, res) => {
   });
 
 
-// Función para procesar comandos mediante palabras clave (alternativa cuando OpenAI no está disponible)
+// Función para procesar comandos mediante palabras clave (alternativa cuando Claude no está disponible)
 async function processWithKeywords(transcription, commandType, projectId, res) {
   const lowercaseTranscription = transcription.toLowerCase();
   let detectedType = commandType || 'assistance';
@@ -456,11 +453,10 @@ async function processWithKeywords(transcription, commandType, projectId, res) {
 }
 
 // Detectar automáticamente el tipo de comando basado en la transcripción
-// Modificar la función detectCommandType para mejorar la detección
 async function detectCommandType(transcription) {
     try {
-      if (!openai) {
-        throw new Error('Cliente OpenAI no inicializado');
+      if (!claude) {
+        throw new Error('Cliente Claude no inicializado');
       }
   
       // Términos clave para distintos tipos de comandos
@@ -495,24 +491,21 @@ async function detectCommandType(transcription) {
         }
       }
   
-      // Si no se detecta por palabras clave, usar OpenAI
-      const completion = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+      // Si no se detecta por palabras clave, usar Claude
+      const message = await claude.messages.create({
+        model: "claude-3-haiku-20240307",
+        max_tokens: 20,
+        temperature: 0.3,
+        system: "Eres un asistente especializado en detectar tipos de comandos de voz para un sistema de gestión de tareas. Tu función es analizar la transcripción y determinar de qué tipo es.",
         messages: [
-          { 
-            role: "system", 
-            content: "Eres un asistente especializado en detectar tipos de comandos de voz para un sistema de gestión de tareas. Tu función es analizar la transcripción y determinar de qué tipo es." 
-          },
           { 
             role: "user", 
             content: `Analiza esta transcripción: "${transcription}" y clasifícala en una de estas categorías: "createTask" (si está solicitando crear una tarea), "createProject" (si está solicitando crear un proyecto), "searchTask" (si está buscando tareas), "updateTask" (si está actualizando una tarea existente), "assistance" (si está pidiendo ayuda o información general). Responde solo con el tipo, sin explicación.` 
           }
-        ],
-        max_tokens: 20,
-        temperature: 0.3,
+        ]
       });
   
-      const detectedType = completion.choices[0].message.content.trim().toLowerCase();
+      const detectedType = message.content[0].text.trim().toLowerCase();
       
       // Validar que el tipo sea uno de los aceptados
       const validTypes = ['createtask', 'createproject', 'searchtask', 'updatetask', 'assistance'];
@@ -530,191 +523,215 @@ async function detectCommandType(transcription) {
   }
   
 
-  async function processCreateTaskCommand(transcription, projectId, projectsContext = []) {
-    try {
-      // Si no se proporcionó un ID de proyecto, intentar determinar el proyecto
-      // basándose en el contexto y la transcripción
-      let targetProjectId = projectId;
-      let targetProjectName = "";
+async function processCreateTaskCommand(transcription, projectId, projectsContext = []) {
+  try {
+    // Si no se proporcionó un ID de proyecto, intentar determinar el proyecto
+    // basándose en el contexto y la transcripción
+    let targetProjectId = projectId;
+    let targetProjectName = "";
+    
+    if (!targetProjectId && projectsContext && projectsContext.length > 0) {
+      // Primero intentar identificar directamente el proyecto mencionado en la transcripción
+      const normalizedTranscription = transcription.toLowerCase();
       
-      if (!targetProjectId && projectsContext && projectsContext.length > 0) {
-        // Intentar identificar el proyecto mencionado en la transcripción
-        if (!openai) {
-          // Si OpenAI no está disponible, usar el primer proyecto como fallback
-          targetProjectId = projectsContext[0].id;
-          targetProjectName = projectsContext[0].title;
-          logger.info(`Sin OpenAI disponible, usando el primer proyecto como fallback: ${targetProjectName} (${targetProjectId})`);
-        } else {
-          try {
-            // Usar LLM para identificar el proyecto mencionado
-            const projectCompletion = await openai.chat.completions.create({
-              model: "gpt-3.5-turbo",
-              messages: [
-                { 
-                  role: "system", 
-                  content: `Eres un asistente que identifica menciones de proyectos en comandos de voz.
-                  Tienes esta lista de proyectos disponibles:
-                  ${JSON.stringify(projectsContext, null, 2)}` 
-                },
-                { 
-                  role: "user", 
-                  content: `En este texto: "${transcription}"
-                  ¿Se menciona algún proyecto específico? Si es así, identifica cuál de los proyectos de la lista corresponde mejor.
-                  Responde solo con el ID del proyecto. Si no hay mención clara, responde "default".` 
-                }
-              ],
-              max_tokens: 20,
-              temperature: 0.3,
-            });
-            
-            const projectResult = projectCompletion.choices[0].message.content.trim();
-            
-            if (projectResult && projectResult !== "default") {
-              // Intentar encontrar el proyecto por ID
-              const matchedProject = projectsContext.find(p => p.id.toString() === projectResult);
-              if (matchedProject) {
-                targetProjectId = matchedProject.id;
-                targetProjectName = matchedProject.title;
-                logger.info(`Proyecto identificado en transcripción: ${targetProjectName} (${targetProjectId})`);
-              } else {
-                // Si no se encuentra por ID, usar el primero
-                targetProjectId = projectsContext[0].id;
-                targetProjectName = projectsContext[0].title;
-                logger.info(`No se identificó proyecto, usando el primero: ${targetProjectName} (${targetProjectId})`);
+      // Intentar coincidir directamente con los títulos de los proyectos
+      const mentionedProject = projectsContext.find(project => 
+        normalizedTranscription.includes(project.title.toLowerCase())
+      );
+      
+      if (mentionedProject) {
+        targetProjectId = mentionedProject.id;
+        targetProjectName = mentionedProject.title;
+        logger.info(`Proyecto identificado directamente en transcripción: ${targetProjectName} (${targetProjectId})`);
+      } else if (!claude) {
+        // Si Claude no está disponible, usar el primer proyecto como fallback
+        targetProjectId = projectsContext[0].id;
+        targetProjectName = projectsContext[0].title;
+        logger.info(`Sin Claude disponible, usando el primer proyecto como fallback: ${targetProjectName} (${targetProjectId})`);
+      } else {
+        try {
+          // Usar Claude para identificar el proyecto mencionado
+          const message = await claude.messages.create({
+            model: "claude-3-haiku-20240307",
+            max_tokens: 20,
+            temperature: 0.3,
+            system: `Eres un asistente que identifica menciones de proyectos en comandos de voz.
+            Tienes esta lista de proyectos disponibles:
+            ${JSON.stringify(projectsContext, null, 2)}`,
+            messages: [
+              { 
+                role: "user", 
+                content: `En este texto: "${transcription}"
+                ¿Se menciona algún proyecto específico? Si es así, identifica cuál de los proyectos de la lista corresponde mejor.
+                Responde solo con el ID del proyecto. Si no hay mención clara, responde "default".` 
               }
+            ]
+          });
+          
+          const projectResult = message.content[0].text.trim();
+          
+          if (projectResult && projectResult !== "default") {
+            // Intentar encontrar el proyecto por ID
+            const matchedProject = projectsContext.find(p => p.id.toString() === projectResult);
+            if (matchedProject) {
+              targetProjectId = matchedProject.id;
+              targetProjectName = matchedProject.title;
+              logger.info(`Proyecto identificado por Claude: ${targetProjectName} (${targetProjectId})`);
             } else {
-              // Usar el primer proyecto como valor predeterminado
+              // Si no se encuentra por ID, usar el primero
               targetProjectId = projectsContext[0].id;
               targetProjectName = projectsContext[0].title;
-              logger.info(`No se mencionó proyecto específico, usando el primero: ${targetProjectName} (${targetProjectId})`);
+              logger.info(`Claude retornó ID de proyecto inválido, usando el primero: ${targetProjectName} (${targetProjectId})`);
             }
-          } catch (error) {
-            // En caso de error, usar el primer proyecto
+          } else {
+            // Usar el primer proyecto como valor predeterminado
             targetProjectId = projectsContext[0].id;
             targetProjectName = projectsContext[0].title;
-            logger.error(`Error al identificar proyecto: ${error.message}`);
+            logger.info(`No se mencionó proyecto específico, usando el primero: ${targetProjectName} (${targetProjectId})`);
           }
+        } catch (error) {
+          // En caso de error, usar el primer proyecto
+          targetProjectId = projectsContext[0].id;
+          targetProjectName = projectsContext[0].title;
+          logger.error(`Error al identificar proyecto: ${error.message}`);
         }
       }
-      
-      // Si después de todo sigue sin haber un ID de proyecto, reportar error
-      if (!targetProjectId) {
-        return {
-          success: false,
-          error: 'No se pudo determinar a qué proyecto asignar la tarea'
-        };
-      }
-  
-      // Extraer detalles de la tarea usando OpenAI
-      if (!openai) {
-        throw new Error('Cliente OpenAI no inicializado');
-      }
-  
-      // Usar LLM para extraer detalles de la tarea desde la transcripción
-      const completion = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [
-          { 
-            role: "system", 
-            content: `Eres un asistente especializado en extraer detalles de tareas para un sistema de gestión de proyectos. 
-            Estructura de una tarea:
-            - title: Título de la tarea (obligatorio)
-            - description: Descripción de la tarea (opcional)
-            - status: Estado de la tarea (in_progress, completed, pending, cancelled)
-            - completion_date: Fecha límite de la tarea en formato YYYY-MM-DD` 
-          },
-          { 
-            role: "user", 
-            content: `Analiza esta transcripción: "${transcription}" 
-            Extrae los detalles de la tarea que se está solicitando crear. 
-            Devuelve SOLO un objeto JSON con los campos title, description, status y completion_date.
-            Si no hay información sobre algún campo, déjalo como null o con un valor por defecto apropiado.
-            Para completion_date, si no se especifica una fecha exacta pero se menciona un plazo (como "para mañana" o "en una semana"), calcula la fecha correspondiente.
-            Para status, si no se especifica, usa "pending" como valor por defecto.` 
-          }
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.3,
-        max_tokens: 300,
-      });
-  
-      // Extraer y analizar la respuesta
-      const taskDetails = JSON.parse(completion.choices[0].message.content);
-      
-      // Validar que al menos tengamos un título
-      if (!taskDetails.title) {
-        return {
-          success: false,
-          error: 'No se pudo identificar el título de la tarea'
-        };
-      }
-  
-      // Asegurar que tengamos valores para todos los campos
-      const formattedTaskDetails = {
-        title: taskDetails.title,
-        description: taskDetails.description || '',
-        status: taskDetails.status || 'pending',
-        completion_date: taskDetails.completion_date || new Date().toISOString().split('T')[0],
-        projectId: targetProjectId
-      };
-  
-      // Crear la tarea en la base de datos
-      try {
-        const newTask = await Task.create(formattedTaskDetails);
-        
-        // Devolver confirmación con detalles
-        return {
-          success: true,
-          action: 'createTask',
-          taskDetails: {
-            ...newTask.dataValues,
-            projectName: targetProjectName
-          },
-          message: `He creado una nueva tarea: "${taskDetails.title}" en el proyecto "${targetProjectName}".`
-        };
-      } catch (dbError) {
-        logger.error(`Error al crear tarea en base de datos: ${dbError.message}`);
-        
-        return {
-          success: true,
-          action: 'createTask',
-          taskDetails: formattedTaskDetails,
-          projectName: targetProjectName,
-          message: `He procesado tu solicitud pero hubo un problema al guardar la tarea. La tarea "${taskDetails.title}" para el proyecto "${targetProjectName}" está lista, pero no se guardó en la base de datos.`
-        };
-      }
-    } catch (error) {
-      logger.error(`Error al procesar comando de creación de tarea: ${error.message}`);
-      
-      // Implementar fallback para cuando hay un error
+    }
+    
+    // Si después de todo sigue sin haber un ID de proyecto, reportar error
+    if (!targetProjectId) {
       return {
         success: false,
-        action: 'error',
-        error: `Error al procesar la solicitud: ${error.message}`
+        error: 'No se pudo determinar a qué proyecto asignar la tarea'
       };
     }
-  }
-
-// Procesar un comando para crear un proyecto
-async function processCreateProjectCommand(transcription) {
-  try {
-    if (!openai) {
-      throw new Error('Cliente OpenAI no inicializado');
+  
+    // Extraer detalles de la tarea usando Claude
+    if (!claude) {
+      throw new Error('Cliente Claude no inicializado');
     }
-
-    // Usar LLM para extraer detalles del proyecto desde la transcripción
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo", // Usar modelo más básico y económico
+  
+    // Usar Claude para extraer detalles de la tarea desde la transcripción
+    const message = await claude.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 500,
+      temperature: 0.3,
+      system: `Eres un asistente especializado en extraer detalles de tareas para un sistema de gestión de proyectos. 
+      Estructura de una tarea:
+      - title: Título de la tarea (obligatorio)
+      - description: Descripción de la tarea (opcional)
+      - status: Estado de la tarea (in_progress, completed, pending, cancelled)
+      - completion_date: Fecha límite de la tarea en formato YYYY-MM-DD`,
       messages: [
         { 
-          role: "system", 
-          content: `Eres un asistente especializado en extraer detalles de proyectos para un sistema de gestión.
-          Estructura de un proyecto:
-          - title: Título del proyecto (obligatorio)
-          - description: Descripción del proyecto (opcional)
-          - culmination_date: Fecha de culminación del proyecto en formato YYYY-MM-DD (opcional)
-          - priority: Prioridad del proyecto (high, medium, low)` 
+          role: "user", 
+          content: `Analiza esta transcripción: "${transcription}" 
+          Extrae los detalles de la tarea que se está solicitando crear. 
+          Devuelve SOLO un objeto JSON con los campos title, description, status y completion_date.
+          Si no hay información sobre algún campo, déjalo como null o con un valor por defecto apropiado.
+          Para completion_date, si no se especifica una fecha exacta pero se menciona un plazo (como "para mañana" o "en una semana"), calcula la fecha correspondiente.
+          Para status, si no se especifica, usa "pending" como valor por defecto.` 
+        }
+      ]
+    });
+  
+    // Extraer y analizar la respuesta
+    const responseContent = message.content[0].text;
+    
+    // Intentar extraer el JSON de la respuesta
+    let taskDetails;
+    try {
+      // Buscar el objeto JSON en la respuesta
+      const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        taskDetails = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error('No se pudo encontrar un objeto JSON en la respuesta');
+      }
+    } catch (jsonError) {
+      logger.error(`Error al parsear JSON de la respuesta de Claude: ${jsonError.message}`);
+      // Crear un objeto básico como fallback
+      taskDetails = {
+        title: transcription.substring(0, 50) + "...",
+        description: transcription,
+        status: "pending",
+        completion_date: new Date().toISOString().split('T')[0]
+      };
+    }
+    
+    // Validar que al menos tengamos un título
+    if (!taskDetails.title) {
+      return {
+        success: false,
+        error: 'No se pudo identificar el título de la tarea'
+      };
+    }
+  
+    // Asegurar que tengamos valores para todos los campos
+    const formattedTaskDetails = {
+      title: taskDetails.title,
+      description: taskDetails.description || '',
+      status: taskDetails.status || 'pending',
+      completion_date: taskDetails.completion_date || new Date().toISOString().split('T')[0],
+      projectId: targetProjectId
+    };
+  
+    // Crear la tarea en la base de datos
+    try {
+      const newTask = await Task.create(formattedTaskDetails);
+      
+      // Devolver confirmación con detalles
+      return {
+        success: true,
+        action: 'createTask',
+        taskDetails: {
+          ...newTask.dataValues,
+          projectName: targetProjectName
         },
+        message: `He creado una nueva tarea: "${taskDetails.title}" en el proyecto "${targetProjectName}".`
+      };
+    } catch (dbError) {
+      logger.error(`Error al crear tarea en base de datos: ${dbError.message}`);
+      
+      return {
+        success: true,
+        action: 'createTask',
+        taskDetails: formattedTaskDetails,
+        projectName: targetProjectName,
+        message: `He procesado tu solicitud pero hubo un problema al guardar la tarea. La tarea "${taskDetails.title}" para el proyecto "${targetProjectName}" está lista, pero no se guardó en la base de datos.`
+      };
+    }
+  } catch (error) {
+    logger.error(`Error al procesar comando de creación de tarea: ${error.message}`);
+    
+    // Implementar fallback para cuando hay un error
+    return {
+      success: false,
+      action: 'error',
+      error: `Error al procesar la solicitud: ${error.message}`
+    };
+  }
+}
+
+// Procesar un comando para crear un proyecto
+async function processCreateProjectCommand(transcription, projectsContext = []) {
+  try {
+    if (!claude) {
+      throw new Error('Cliente Claude no inicializado');
+    }
+
+    // Usar Claude para extraer detalles del proyecto desde la transcripción
+    const message = await claude.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 500,
+      temperature: 0.3,
+      system: `Eres un asistente especializado en extraer detalles de proyectos para un sistema de gestión.
+      Estructura de un proyecto:
+      - title: Título del proyecto (obligatorio)
+      - description: Descripción del proyecto (opcional)
+      - culmination_date: Fecha de culminación del proyecto en formato YYYY-MM-DD (opcional)
+      - priority: Prioridad del proyecto (high, medium, low)`,
+      messages: [
         { 
           role: "user", 
           content: `Analiza esta transcripción: "${transcription}" 
@@ -724,14 +741,32 @@ async function processCreateProjectCommand(transcription) {
           Para culmination_date, si no se especifica una fecha exacta pero se menciona un plazo (como "para fin de año"), calcula la fecha correspondiente.
           Para priority, si no se especifica, usa "medium" como valor por defecto.` 
         }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.3,
-      max_tokens: 300, // Limitamos los tokens para la respuesta
+      ]
     });
 
     // Extraer y analizar la respuesta
-    const projectDetails = JSON.parse(completion.choices[0].message.content);
+    const responseContent = message.content[0].text;
+    
+    // Intentar extraer el JSON de la respuesta
+    let projectDetails;
+    try {
+      // Buscar el objeto JSON en la respuesta
+      const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        projectDetails = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error('No se pudo encontrar un objeto JSON en la respuesta');
+      }
+    } catch (jsonError) {
+      logger.error(`Error al parsear JSON de la respuesta de Claude: ${jsonError.message}`);
+      // Crear un objeto básico como fallback
+      projectDetails = {
+        title: transcription.substring(0, 50) + "...",
+        description: transcription,
+        priority: "medium",
+        culmination_date: null
+      };
+    }
     
     // Validar que al menos tengamos un título
     if (!projectDetails.title) {
@@ -792,20 +827,19 @@ async function processCreateProjectCommand(transcription) {
 }
 
 // Procesar un comando para buscar tareas
-async function processSearchTaskCommand(transcription) {
+async function processSearchTaskCommand(transcription, projectsContext = [], tasksContext = []) {
   try {
-    if (!openai) {
-      throw new Error('Cliente OpenAI no inicializado');
+    if (!claude) {
+      throw new Error('Cliente Claude no inicializado');
     }
 
-    // Usar LLM para extraer criterios de búsqueda desde la transcripción
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo", // Usar modelo más básico y económico
+    // Usar Claude para extraer criterios de búsqueda desde la transcripción
+    const message = await claude.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 500,
+      temperature: 0.3,
+      system: `Eres un asistente especializado en extraer criterios de búsqueda para un sistema de gestión de tareas.`,
       messages: [
-        { 
-          role: "system", 
-          content: `Eres un asistente especializado en extraer criterios de búsqueda para un sistema de gestión de tareas.` 
-        },
         { 
           role: "user", 
           content: `Analiza esta transcripción: "${transcription}" 
@@ -816,14 +850,29 @@ async function processSearchTaskCommand(transcription) {
           
           Devuelve SOLO un objeto JSON con estos campos. Si algún criterio no está presente, omítelo del objeto.` 
         }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.3,
-      max_tokens: 300, // Limitamos los tokens para la respuesta
+      ]
     });
 
     // Extraer y analizar la respuesta
-    const searchParams = JSON.parse(completion.choices[0].message.content);
+    const responseContent = message.content[0].text;
+    
+    // Intentar extraer el JSON de la respuesta
+    let searchParams;
+    try {
+      // Buscar el objeto JSON en la respuesta
+      const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        searchParams = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error('No se pudo encontrar un objeto JSON en la respuesta');
+      }
+    } catch (jsonError) {
+      logger.error(`Error al parsear JSON de la respuesta de Claude: ${jsonError.message}`);
+      // Crear un objeto básico como fallback
+      const searchMatch = transcription.match(/(?:buscar|encontrar|mostrar) (?:tareas? (?:sobre|de|con))? ?["']?([^"'.,]+)["']?/i);
+      const searchTerm = searchMatch ? searchMatch[1].trim() : "";
+      searchParams = { searchTerm };
+    }
     
     // Construir la respuesta
     return {
@@ -849,20 +898,19 @@ async function processSearchTaskCommand(transcription) {
 }
 
 // Procesar un comando para actualizar una tarea
-async function processUpdateTaskCommand(transcription) {
+async function processUpdateTaskCommand(transcription, projectsContext = [], tasksContext = []) {
   try {
-    if (!openai) {
-      throw new Error('Cliente OpenAI no inicializado');
+    if (!claude) {
+      throw new Error('Cliente Claude no inicializado');
     }
 
-    // Usar LLM para extraer detalles de la actualización
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo", // Usar modelo más básico y económico
+    // Usar Claude para extraer detalles de la actualización
+    const message = await claude.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 500,
+      temperature: 0.3,
+      system: `Eres un asistente especializado en extraer detalles para actualizar tareas en un sistema de gestión de proyectos.`,
       messages: [
-        { 
-          role: "system", 
-          content: `Eres un asistente especializado en extraer detalles para actualizar tareas en un sistema de gestión de proyectos.` 
-        },
         { 
           role: "user", 
           content: `Analiza esta transcripción: "${transcription}" 
@@ -876,14 +924,31 @@ async function processUpdateTaskCommand(transcription) {
           
           Devuelve SOLO un objeto JSON con estos campos. Incluye en 'updates' solo los campos que realmente se van a actualizar.` 
         }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.3,
-      max_tokens: 300, // Limitamos los tokens para la respuesta
+      ]
     });
 
     // Extraer y analizar la respuesta
-    const updateDetails = JSON.parse(completion.choices[0].message.content);
+    const responseContent = message.content[0].text;
+    
+    // Intentar extraer el JSON de la respuesta
+    let updateDetails;
+    try {
+      // Buscar el objeto JSON en la respuesta
+      const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        updateDetails = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error('No se pudo encontrar un objeto JSON en la respuesta');
+      }
+    } catch (jsonError) {
+      logger.error(`Error al parsear JSON de la respuesta de Claude: ${jsonError.message}`);
+      
+      // Fallback simple
+      return {
+        success: false,
+        error: 'No se pudo procesar la solicitud de actualización de tarea'
+      };
+    }
     
     // Validar que tengamos un identificador y al menos un campo a actualizar
     if (!updateDetails.taskIdentifier || !updateDetails.updates || Object.keys(updateDetails.updates).length === 0) {
@@ -909,12 +974,11 @@ async function processUpdateTaskCommand(transcription) {
   }
 }
 
-// Procesar un comando de asistencia general
 // Procesar un comando de asistencia general con información contextual
 async function processAssistanceCommand(transcription, projectsContext = [], tasksContext = []) {
   try {
-    if (!openai) {
-      throw new Error('Cliente OpenAI no inicializado');
+    if (!claude) {
+      throw new Error('Cliente Claude no inicializado');
     }
 
     // Crear un prompt con contexto
@@ -930,39 +994,36 @@ ${JSON.stringify(projectsContext, null, 2)}`;
 ${JSON.stringify(tasksContext, null, 2)}`;
     }
 
-    // Usar LLM para generar una respuesta de asistencia
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo", // Usar modelo más básico y económico
+    // Usar Claude para generar una respuesta de asistencia
+    const message = await claude.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 350,
+      temperature: 0.7,
+      system: `Eres un asistente virtual para un sistema de gestión de tareas llamado SmartTask. 
+      Puedes ayudar con información sobre cómo usar la aplicación, responder preguntas sobre gestión de proyectos y tareas, 
+      y ofrecer consejos para mejorar la productividad.
+      
+      Características de SmartTask:
+      - Creación y gestión de proyectos con títulos, descripciones, fechas y prioridades
+      - Creación y gestión de tareas dentro de cada proyecto
+      - Las tareas tienen título, descripción, estado y fecha límite
+      - Estados de tarea: pendiente, en progreso, completada, cancelada
+      - Visualización de estadísticas en un dashboard
+      
+      ${contextPrompt}
+      
+      Mantén tus respuestas concisas, útiles y enfocadas en ayudar al usuario con su sistema de gestión de tareas.`,
       messages: [
-        { 
-          role: "system", 
-          content: `Eres un asistente virtual para un sistema de gestión de tareas llamado SmartTask. 
-          Puedes ayudar con información sobre cómo usar la aplicación, responder preguntas sobre gestión de proyectos y tareas, 
-          y ofrecer consejos para mejorar la productividad.
-          
-          Características de SmartTask:
-          - Creación y gestión de proyectos con títulos, descripciones, fechas y prioridades
-          - Creación y gestión de tareas dentro de cada proyecto
-          - Las tareas tienen título, descripción, estado y fecha límite
-          - Estados de tarea: pendiente, en progreso, completada, cancelada
-          - Visualización de estadísticas en un dashboard
-          
-          ${contextPrompt}
-          
-          Mantén tus respuestas concisas, útiles y enfocadas en ayudar al usuario con su sistema de gestión de tareas.` 
-        },
         { 
           role: "user", 
           content: `El usuario ha dicho: "${transcription}"
           Proporciona una respuesta útil y concisa. No uses más de 3-4 oraciones.` 
         }
-      ],
-      temperature: 0.7,
-      max_tokens: 150, // Limitar la longitud de la respuesta
+      ]
     });
 
     // Extraer la respuesta
-    const assistantResponse = completion.choices[0].message.content.trim();
+    const assistantResponse = message.content[0].text.trim();
     
     return {
       success: true,
