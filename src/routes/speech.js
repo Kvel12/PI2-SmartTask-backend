@@ -24,7 +24,7 @@ const logger = winston.createLogger({
   ]
 });
 
-// Initialize Claude client
+// Inicializar el cliente de la API de Claude
 let claude;
 try {
   if (process.env.CLAUDE_API_KEY) {
