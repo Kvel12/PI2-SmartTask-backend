@@ -1,6 +1,7 @@
+const { Op } = require('sequelize');
 const Project = require('../models/project');
 const logger = require('../logger');
-
+const Task = require('../models/task'); 
 
 /**
  * Crea un nuevo proyecto con los detalles proporcionados.
@@ -80,27 +81,37 @@ async function updateProject(req, res) {
     const { id } = req.params;
     const { title, description, priority, culmination_date } = req.body;
 
-     // Verificar si el proyecto existe     
+    // Verificar si el proyecto existe     
     const project = await Project.findByPk(id);
     if (!project) {
       return res.status(404).json({ message: 'Project not found' });
     }
 
     // Verificar si el nuevo título ya está en uso por otro proyecto
-    const existingProject = await Project.findOne({ where: { title, id: { [Op.ne]: id } } });
-    if (existingProject) {
-      return res.status(400).json({ message: 'The project name is already in use, please choose another.' });
+    if (title && title !== project.title) {
+      const existingProject = await Project.findOne({ 
+        where: { 
+          title, 
+          id: { [Op.ne]: id } 
+        } 
+      });
+      
+      if (existingProject) {
+        return res.status(400).json({ message: 'The project name is already in use, please choose another.' });
+      }
     }
-    project.title = title;
-    project.description = description;
-    project.priority = priority;
-    project.culmination_date = culmination_date;
+    
+    // Actualizar solo los campos proporcionados
+    if (title) project.title = title;
+    if (description) project.description = description;
+    if (priority) project.priority = priority;
+    if (culmination_date) project.culmination_date = culmination_date;
 
     await project.save();
     logger.info(`Project updated: ${project.id}`);
     res.status(200).json(project);
   } catch (error) {
-    logger.error('Error updating project', error);
+    logger.error(`Error updating project ${error.message}`, error);
     res.status(500).json({ message: 'Error updating project' });
   }
 }
@@ -197,4 +208,4 @@ async function getAllProjectIds(req, res) {
   }
 }
 
-module.exports = { createProject, getAllProjects, updateProject, deleteProject };
+module.exports = { createProject, getAllProjects, updateProject, deleteProject, getProjectById, getAllProjectIds };
