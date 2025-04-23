@@ -823,12 +823,15 @@ async function processCreateProjectCommand(transcription) {
     // Generar un mensaje de respuesta claro y orientado a la acción
     let responseMessage = `He creado el proyecto "${projectData.title}" con prioridad ${projectData.priority}.`;
     
+    // Añadir información sobre la fecha de finalización si está disponible
     if (projectData.culmination_date) {
       responseMessage += ` La fecha de finalización está establecida para el ${projectData.culmination_date}.`;
     }
     
+    // Sugerir al usuario que puede comenzar a añadir tareas al proyecto
     responseMessage += ` Ya puedes empezar a añadir tareas a este proyecto.`;
     
+    // Devolver el resultado exitoso con los detalles del proyecto creado
     return {
       success: true,
       action: 'createProject',
@@ -1034,6 +1037,35 @@ async function extractProjectDetails(transcription) {
 }
 
 // Procesador de comando para buscar tareas - MEJORADO
+/**
+ * Procesa un comando de búsqueda de tareas basado en una transcripción y un ID de proyecto.
+ * 
+ * @async
+ * @function processSearchTaskCommand
+ * @param {string} transcription - La transcripción del comando de búsqueda proporcionada por el usuario.
+ * @param {number} projectId - El ID del proyecto asociado al comando de búsqueda.
+ * @returns {Promise<Object>} Un objeto que contiene el resultado de la búsqueda, incluyendo:
+ * - `success` {boolean}: Indica si la operación fue exitosa.
+ * - `action` {string}: La acción realizada, en este caso 'searchTasks'.
+ * - `searchParams` {Object}: Los parámetros de búsqueda extraídos de la transcripción.
+ * - `searchResults` {Array<Object>}: Una lista de tareas que coinciden con los criterios de búsqueda.
+ * - `response` {string}: Un mensaje de respuesta claro para el usuario.
+ * 
+ * @throws {Error} Si ocurre un error durante el procesamiento o la búsqueda de tareas.
+ * 
+ * @description
+ * Esta función utiliza un modelo de lenguaje (LLM) para extraer parámetros de búsqueda de la transcripción
+ * proporcionada por el usuario. Luego construye una consulta basada en esos parámetros y busca tareas
+ * en la base de datos que coincidan con los criterios. Los resultados se formatean y se genera un mensaje
+ * de respuesta adecuado para el usuario.
+ * 
+ * Los parámetros de búsqueda pueden incluir:
+ * - `searchTerm`: Un término de búsqueda para buscar en los títulos y descripciones de las tareas.
+ * - `status`: El estado de las tareas (por ejemplo, 'pending', 'in_progress', 'completed', 'cancelled').
+ * - `projectId`: El ID del proyecto al que pertenecen las tareas.
+ * 
+ * La búsqueda está limitada a un máximo de 10 resultados por razones de rendimiento.
+ */
 async function processSearchTaskCommand(transcription, projectId) {
   logger.info(`Processing search task command: "${transcription}"`);
   
@@ -1044,6 +1076,7 @@ async function processSearchTaskCommand(transcription, projectId) {
     // Construir la consulta
     const whereClause = {};
     
+    // Si se especifica un término de búsqueda, agregarlo a la cláusula WHERE
     if (searchParams.searchTerm) {
       whereClause[Op.or] = [
         { title: { [Op.iLike]: `%${searchParams.searchTerm}%` } },
@@ -1051,10 +1084,12 @@ async function processSearchTaskCommand(transcription, projectId) {
       ];
     }
     
+    // Si se especifica un estado, agregarlo a la cláusula WHERE
     if (searchParams.status) {
       whereClause.status = searchParams.status;
     }
     
+    // Si se especifica un ID de proyecto, agregarlo a la cláusula WHERE
     if (searchParams.projectId) {
       whereClause.projectId = searchParams.projectId;
     }
@@ -1088,19 +1123,25 @@ async function processSearchTaskCommand(transcription, projectId) {
     // Generar mensaje de respuesta claro
     let responseMessage;
     
+    // Si no se encontraron resultados, generar un mensaje adecuado
     if (searchResults.length === 0) {
       if (searchParams.searchTerm) {
+        // No se encontraron tareas relacionadas con el término de búsqueda
         responseMessage = `No encontré ninguna tarea relacionada con "${searchParams.searchTerm}". ¿Quieres probar con otros términos de búsqueda?`;
       } else {
+        // No se encontraron tareas con los criterios proporcionados
         responseMessage = `No encontré ninguna tarea que coincida con tu búsqueda. Intenta con otros criterios o crea nuevas tareas.`;
       }
     } else {
+      // Si se encontraron resultados, generar un mensaje con los detalles
       responseMessage = `He encontrado ${searchResults.length} tarea${searchResults.length === 1 ? '' : 's'}`;
       
+      // Incluir el término de búsqueda en el mensaje si está disponible
       if (searchParams.searchTerm) {
         responseMessage += ` relacionada${searchResults.length === 1 ? '' : 's'} con "${searchParams.searchTerm}"`;
       }
       
+      // Incluir el estado en el mensaje si está disponible
       if (searchParams.status) {
         const statusText = {
           'pending': 'pendiente',
@@ -1122,6 +1163,7 @@ async function processSearchTaskCommand(transcription, projectId) {
       }
       
       if (searchResults.length > summaryCount) {
+        // Indicar que hay más tareas que las mostradas en el resumen
         responseMessage += `\n...y ${searchResults.length - summaryCount} más.`;
       }
     }
@@ -1134,6 +1176,7 @@ async function processSearchTaskCommand(transcription, projectId) {
       response: responseMessage
     };
   } catch (error) {
+    // Manejar errores durante la búsqueda de tareas
     logger.error(`Error al buscar tareas: ${error.message}`);
     return {
       success: false,
@@ -2058,6 +2101,42 @@ async function extractUpdateDetails(transcription) {
 }
 
 // Procesador de comando para contar tareas - MEJORADO
+/**
+ * Procesa un comando de voz para contar las tareas existentes en el sistema.
+ * 
+ * @async
+ * @function processCountTasksCommand
+ * @returns {Promise<Object>} Un objeto que contiene:
+ * - `success` {boolean}: Indica si la operación fue exitosa.
+ * - `action` {string}: La acción realizada, en este caso 'countTasks'.
+ * - `counts` {Object}: Un objeto con el conteo total y por estado de las tareas:
+ *    - `total` {number}: El número total de tareas en el sistema.
+ *    - `pending` {number}: El número de tareas pendientes.
+ *    - `inProgress` {number}: El número de tareas en progreso.
+ *    - `completed` {number}: El número de tareas completadas.
+ *    - `cancelled` {number}: El número de tareas canceladas.
+ * - `tasksByProject` {Array<Object>}: Una lista de proyectos con estadísticas de sus tareas, incluyendo:
+ *    - `projectId` {number}: El ID del proyecto.
+ *    - `projectName` {string}: El nombre del proyecto.
+ *    - `taskCount` {number}: El número total de tareas asociadas al proyecto.
+ *    - `pendingCount` {number}: El número de tareas pendientes en el proyecto.
+ *    - `inProgressCount` {number}: El número de tareas en progreso en el proyecto.
+ *    - `completedCount` {number}: El número de tareas completadas en el proyecto.
+ *    - `cancelledCount` {number}: El número de tareas canceladas en el proyecto.
+ * - `response` {string}: Un mensaje de respuesta claro y amigable para el usuario.
+ * 
+ * @throws {Error} Si ocurre un error durante el conteo de tareas o la obtención de estadísticas.
+ * 
+ * @description
+ * Esta función cuenta el número total de tareas en el sistema y genera estadísticas
+ * sobre las tareas, incluyendo su distribución por estado y por proyecto. Si no hay tareas,
+ * sugiere al usuario crear una nueva. Si hay tareas, genera un mensaje detallado con la cantidad
+ * total de tareas, su distribución por estado y, si es relevante, su distribución por proyecto.
+ * 
+ * @example
+ * const result = await processCountTasksCommand();
+ * console.log(result.response);
+ */
 async function processCountTasksCommand() {
   logger.info('Processing count tasks command');
   
@@ -2146,6 +2225,33 @@ async function processCountTasksCommand() {
 }
 
 // Procesador de comando para contar proyectos - MEJORADO
+/**
+ * Procesa un comando de voz para contar los proyectos existentes en el sistema.
+ * 
+ * @async
+ * @function processCountProjectsCommand
+ * @returns {Promise<Object>} Un objeto que contiene:
+ * - `success` {boolean}: Indica si la operación fue exitosa.
+ * - `action` {string}: La acción realizada, en este caso 'countProjects'.
+ * - `count` {number}: El número total de proyectos en el sistema.
+ * - `projects` {Array<Object>}: Una lista de proyectos con sus estadísticas, incluyendo:
+ *    - `id` {number}: El ID del proyecto.
+ *    - `title` {string}: El título del proyecto.
+ *    - `taskCount` {number}: El número de tareas asociadas al proyecto.
+ * - `response` {string}: Un mensaje de respuesta claro y amigable para el usuario.
+ * 
+ * @throws {Error} Si ocurre un error durante el conteo de proyectos o la obtención de estadísticas.
+ * 
+ * @description
+ * Esta función cuenta el número total de proyectos en el sistema y genera estadísticas
+ * sobre cada proyecto, incluyendo el número de tareas asociadas. Si no hay proyectos,
+ * sugiere al usuario crear uno nuevo. Si hay proyectos, genera un mensaje detallado
+ * con la cantidad de proyectos y sus respectivas estadísticas.
+ * 
+ * @example
+ * const result = await processCountProjectsCommand();
+ * console.log(result.response);
+ */
 async function processCountProjectsCommand() {
   logger.info('Processing count projects command');
   
@@ -2203,6 +2309,26 @@ async function processCountProjectsCommand() {
 }
 
 // Procesador de comando de asistencia general - MEJORADO
+/**
+ * Procesa un comando de asistencia basado en una transcripción de texto y un conjunto opcional de proyectos.
+ * Identifica intenciones específicas en el texto y redirige a las funciones correspondientes para manejar
+ * comandos como crear, buscar, actualizar o contar tareas y proyectos. Si no se identifica una intención clara,
+ * utiliza un modelo de lenguaje (Claude) para generar una respuesta contextualizada.
+ *
+ * @async
+ * @function
+ * @param {string} transcription - La transcripción del comando de voz proporcionado por el usuario.
+ * @param {Array<Object>} [projects=[]] - Lista opcional de proyectos actuales, donde cada proyecto es un objeto con al menos un título.
+ * @returns {Promise<Object>} Un objeto con la estructura `{ success: boolean, response: string }` que contiene el éxito de la operación y la respuesta generada.
+ *
+ * @throws {Error} Si ocurre un problema al interactuar con el cliente OpenAI para generar una respuesta.
+ *
+ * @example
+ * const transcription = "Crear tarea llamada 'Comprar materiales' en el proyecto 'Construcción'";
+ * const projects = [{ title: "Construcción" }, { title: "Diseño" }];
+ * const result = await processAssistanceCommand(transcription, projects);
+ * console.log(result.response);
+ */
 async function processAssistanceCommand(transcription, projects = []) {
   logger.info(`Processing assistance command: "${transcription}"`);
   
