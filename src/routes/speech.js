@@ -1,3 +1,4 @@
+// routes/speech.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -208,33 +209,56 @@ router.post('/process-voice-text', auth, async (req, res) => {
       logger.warn(`Error al obtener proyectos: ${error.message}`);
     }
     
-    // Detectar el tipo de comando
+    // Detectar el tipo de comando - VERSIÓN MEJORADA
     let detectedCommandType = commandType;
     
     if (!detectedCommandType) {
-      // Detección por palabras clave (más confiable)
-      const normalizedText = transcription.toLowerCase();
+      // Detección por palabras clave - versión mejorada
+      const normalizedText = transcription.trim().toLowerCase();
       
-      if (normalizedText.includes('crear tarea') || normalizedText.includes('nueva tarea')) {
+      // Uso expresiones regulares más precisas para capturar los comandos
+      const createTaskRegex = /\b(crear|nueva|agregar|añadir)\s+(una\s+)?tarea\b/i;
+      const createProjectRegex = /\b(crear|nuevo|agregar|añadir)\s+(un\s+)?proyecto\b/i;
+      const searchTaskRegex = /\b(buscar|encontrar|mostrar|listar)\s+(tareas?|actividades)\b/i;
+      const updateTaskRegex = /\b(actualizar|modificar|cambiar|marcar)\s+(la\s+)?tarea\b/i;
+      const countTasksRegex = /\b(cuantas|cuántas|numero|número|total\s+de)\s+tareas\b/i;
+      
+      if (createTaskRegex.test(normalizedText)) {
         detectedCommandType = 'createTask';
-        logger.info('Command type detected via keywords: createTask');
-      } else if (normalizedText.includes('crear proyecto') || normalizedText.includes('nuevo proyecto')) {
+        logger.info('Command type detected via regex: createTask');
+      } else if (createProjectRegex.test(normalizedText)) {
         detectedCommandType = 'createProject';
-        logger.info('Command type detected via keywords: createProject');
-      } else if (normalizedText.includes('buscar') || normalizedText.includes('encontrar') || 
-                normalizedText.includes('mostrar') || normalizedText.includes('listar')) {
+        logger.info('Command type detected via regex: createProject');
+      } else if (searchTaskRegex.test(normalizedText)) {
         detectedCommandType = 'searchTask';
-        logger.info('Command type detected via keywords: searchTask');
-      } else if (normalizedText.includes('actualizar') || normalizedText.includes('modificar') ||
-                normalizedText.includes('cambiar')) {
+        logger.info('Command type detected via regex: searchTask');
+      } else if (updateTaskRegex.test(normalizedText)) {
         detectedCommandType = 'updateTask';
-        logger.info('Command type detected via keywords: updateTask');
-      } else if (normalizedText.includes('cuántas tareas') || normalizedText.includes('número de tareas')) {
+        logger.info('Command type detected via regex: updateTask');
+      } else if (countTasksRegex.test(normalizedText)) {
         detectedCommandType = 'countTasks';
-        logger.info('Command type detected via keywords: countTasks');
+        logger.info('Command type detected via regex: countTasks');
       } else {
-        detectedCommandType = 'assistance';
-        logger.info('No specific command detected, defaulting to assistance');
+        // Verificación de respaldo por palabras clave simples
+        if (normalizedText.includes('crear tarea') || normalizedText.includes('nueva tarea')) {
+          detectedCommandType = 'createTask';
+          logger.info('Command type detected via keywords: createTask');
+        } else if (normalizedText.includes('crear proyecto') || normalizedText.includes('nuevo proyecto')) {
+          detectedCommandType = 'createProject';
+          logger.info('Command type detected via keywords: createProject');
+        } else if (normalizedText.includes('buscar') && normalizedText.includes('tarea')) {
+          detectedCommandType = 'searchTask';
+          logger.info('Command type detected via keywords: searchTask');
+        } else if (normalizedText.includes('cambiar') || normalizedText.includes('actualizar')) {
+          detectedCommandType = 'updateTask';
+          logger.info('Command type detected via keywords: updateTask');
+        } else if (normalizedText.includes('cuántas') || normalizedText.includes('cuantas')) {
+          detectedCommandType = 'countTasks';
+          logger.info('Command type detected via keywords: countTasks');
+        } else {
+          detectedCommandType = 'assistance';
+          logger.info('No specific command detected, defaulting to assistance');
+        }
       }
     }
     
@@ -579,13 +603,13 @@ async function extractProjectDetails(transcription) {
     
     // Extraer título
     let title = "Nuevo proyecto";
-    const titleMatch = transcription.match(/(?:crear|nuevo) proyecto (?:llamado|titulado|con nombre|con título)? ?["']?([^"'.,]+)["']?/i);
+    const titleMatch = transcription.match(/(?:crear|nuevo) proyecto(?:s)? (?:llamado|titulado|con nombre|con título)? ?["']?([^"'.,]+)["']?/i);
     
     if (titleMatch) {
       title = titleMatch[1].trim();
     } else if (lowercaseText.includes("crear proyecto")) {
       // Extraer todo después de "crear proyecto"
-      const afterCreateMatch = transcription.match(/crear proyecto (.+)/i);
+      const afterCreateMatch = transcription.match(/crear proyecto(?:s)? (.+)/i);
       if (afterCreateMatch) {
         // Usar las primeras palabras como título
         const words = afterCreateMatch[1].split(' ');
@@ -825,11 +849,21 @@ async function processUpdateTaskCommand(transcription) {
     
     // Asegurarse de que hay actualizaciones para aplicar
     if (!updateDetails.updates || Object.keys(updateDetails.updates).length === 0) {
-      logger.error('No se especificaron actualizaciones en el comando');
-      return {
-        success: false,
-        error: 'No se especificaron cambios para actualizar la tarea.'
-      };
+      // Si no se especificaron actualizaciones específicas pero se menciona "completar"
+      // entonces actualizamos el estado a "completed"
+      if (transcription.toLowerCase().includes('completar') || 
+          transcription.toLowerCase().includes('completada') ||
+          transcription.toLowerCase().includes('finalizar') ||
+          transcription.toLowerCase().includes('terminar')) {
+        updateDetails.updates = { status: 'completed' };
+        logger.info('Se detectó la intención de marcar como completada, aplicando actualización de estado');
+      } else {
+        logger.error('No se especificaron actualizaciones en el comando');
+        return {
+          success: false,
+          error: 'No se especificaron cambios para actualizar la tarea.'
+        };
+      }
     }
     
     logger.info(`Actualizando tarea ${task.id} con: ${JSON.stringify(updateDetails.updates)}`);
@@ -886,6 +920,7 @@ async function extractUpdateDetails(transcription) {
               
               Solo incluye campos en 'updates' que realmente se vayan a cambiar.
               Si "en progreso" se menciona, usa "in_progress" para status.
+              Si "completar" o "completada" se menciona, usa "completed" para status.
               Devuelve SOLO el JSON, nada más.` 
             }
           ],
@@ -918,6 +953,12 @@ async function extractUpdateDetails(transcription) {
     
     if (taskMatch) {
       taskIdentifier = taskMatch[1].trim();
+    } else {
+      // Intentar otras formas de identificar la tarea
+      const taskMatch2 = transcription.match(/(?:tarea|actividad) (?:llamada |titulada |con nombre |con título )?["']?([^"'.,]+)["']?/i);
+      if (taskMatch2) {
+        taskIdentifier = taskMatch2[1].trim();
+      }
     }
     
     // Extraer actualizaciones
@@ -933,7 +974,10 @@ async function extractUpdateDetails(transcription) {
     } else if (lowercaseText.includes('a completada') || 
               lowercaseText.includes('estado completada') ||
               lowercaseText.includes('como completada') ||
-              lowercaseText.includes('marcar como completada')) {
+              lowercaseText.includes('marcar como completada') ||
+              lowercaseText.includes('completar') ||
+              lowercaseText.includes('terminar') ||
+              lowercaseText.includes('finalizar')) {
       updates.status = 'completed';
     } else if (lowercaseText.includes('a cancelada') || 
               lowercaseText.includes('estado cancelada')) {
