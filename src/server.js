@@ -13,6 +13,7 @@ const projectRoutes = require('./routes/projects');
 const taskRoutes = require('./routes/tasks');
 const speechRoutes = require('./routes/speech'); // Nueva importación para rutas de reconocimiento de voz
 const authMiddleware = require('./middleware/auth');
+const assistantRoutes = require('./routes/assistant');
 
 // Carga variables de entorno desde un archivo .env
 require('dotenv').config();
@@ -60,6 +61,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/projects', authMiddleware, projectRoutes);
 app.use('/api/tasks', authMiddleware, taskRoutes);
 app.use('/api/speech', authMiddleware, speechRoutes);
+app.use('/api/assistant', authMiddleware, assistantRoutes);
 
 // Servir archivos estáticos desde la carpeta build
 app.use(express.static(path.join(__dirname, '..', 'build')));

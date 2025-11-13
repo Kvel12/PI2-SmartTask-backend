@@ -10,8 +10,9 @@ const auth = require('../middleware/auth');
 const winston = require('winston');
 const { Task, Project } = require('../models');
 const { Op } = require('sequelize');
+const axios = require('axios');
 
-// Configurar logger
+// ==================== CONFIGURACIÓN DE LOGGER ====================
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
@@ -25,7 +26,7 @@ const logger = winston.createLogger({
   ]
 });
 
-// Inicializar OpenAI (apuntando a Claude)
+// ==================== INICIALIZAR CLAUDE ====================
 let openaiClient;
 try {
   if (process.env.CLAUDE_API_KEY) {
@@ -33,41 +34,41 @@ try {
       apiKey: process.env.CLAUDE_API_KEY,
       baseURL: "https://api.anthropic.com/v1/",
     });
-    logger.info('Cliente de Claude (via OpenAI SDK) inicializado correctamente');
+    logger.info('Claude client (via OpenAI SDK) initialized successfully');
   } else {
-    logger.warn('Variable de entorno CLAUDE_API_KEY no configurada');
+    logger.warn('CLAUDE_API_KEY environment variable not configured');
   }
 } catch (error) {
-  logger.error(`Error al inicializar cliente de Claude: ${error.message}`);
+  logger.error(`Error initializing Claude client: ${error.message}`);
 }
 
-// Configurar Google Speech-to-Text
+// ==================== CONFIGURAR GOOGLE SPEECH-TO-TEXT ====================
 let speechClient;
 try {
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
     speechClient = new speech.SpeechClient({
       credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON)
     });
-    logger.info('Cliente de Google Speech-to-Text inicializado correctamente');
+    logger.info('Google Speech-to-Text client initialized successfully');
   } else {
-    logger.error('Variable de entorno GOOGLE_APPLICATION_CREDENTIALS_JSON no configurada');
+    logger.error('GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable not configured');
   }
 } catch (error) {
-  logger.error('Error al configurar Google Speech-to-Text:', error);
+  logger.error('Error configuring Google Speech-to-Text:', error);
 }
 
-// Asegurarse de que exista el directorio de uploads
+// ==================== DIRECTORIO DE UPLOADS ====================
 const uploadDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadDir)) {
   try {
     fs.mkdirSync(uploadDir, { recursive: true });
-    logger.info(`Directorio de uploads creado: ${uploadDir}`);
+    logger.info(`Uploads directory created: ${uploadDir}`);
   } catch (error) {
-    logger.error(`Error al crear directorio de uploads: ${error.message}`);
+    logger.error(`Error creating uploads directory: ${error.message}`);
   }
 }
 
-// Configuración de multer para manejar archivos de audio
+// ==================== CONFIGURACIÓN DE MULTER ====================
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
@@ -81,40 +82,37 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: {
-    fileSize: 10 * 1024 * 1024, // Límite de 10MB
+    fileSize: 10 * 1024 * 1024, // 10MB limit
   },
   fileFilter: (req, file, cb) => {
-    // Validar el tipo de archivo
     const allowedMimeTypes = ['audio/webm', 'audio/ogg', 'audio/wav', 'audio/mpeg', 'audio/mp3'];
     if (allowedMimeTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error(`Formato de archivo no soportado: ${file.mimetype}`), false);
+      cb(new Error(`Unsupported file format: ${file.mimetype}`), false);
     }
   }
 });
 
-// Endpoint para convertir audio a texto
+// ==================== SPEECH-TO-TEXT CON DETECCIÓN DE IDIOMA ====================
 router.post('/speech-to-text', auth, upload.single('audio'), async (req, res) => {
   try {
-    logger.info('Iniciando procesamiento de audio a texto');
+    logger.info('Starting audio to text processing with language detection');
     
     if (!speechClient) {
-      logger.error('Google Speech-to-Text no está configurado correctamente');
-      return res.status(500).json({ error: 'Google Speech-to-Text no está configurado correctamente' });
+      logger.error('Google Speech-to-Text is not configured correctly');
+      return res.status(500).json({ error: 'Google Speech-to-Text is not configured correctly' });
     }
     
     if (!req.file) {
-      logger.error('No se recibió ningún archivo de audio');
-      return res.status(400).json({ error: 'No se recibió ningún archivo de audio' });
+      logger.error('No audio file received');
+      return res.status(400).json({ error: 'No audio file received' });
     }
 
-    logger.info(`Archivo recibido: ${req.file.filename}, tipo: ${req.file.mimetype}, tamaño: ${req.file.size} bytes`);
+    logger.info(`File received: ${req.file.filename}, type: ${req.file.mimetype}, size: ${req.file.size} bytes`);
 
-    // Leer el archivo de audio
     const audioBytes = fs.readFileSync(req.file.path).toString('base64');
     
-    // Determinar el encoding basado en el tipo de archivo
     let encoding;
     switch (req.file.mimetype) {
       case 'audio/webm':
@@ -131,393 +129,484 @@ router.post('/speech-to-text', auth, upload.single('audio'), async (req, res) =>
         encoding = 'MP3';
         break;
       default:
-        encoding = 'ENCODING_UNSPECIFIED'; // Dejar que Google detecte automáticamente
+        encoding = 'ENCODING_UNSPECIFIED';
     }
     
-    logger.info(`Procesando audio con encoding: ${encoding}`);
+    logger.info(`Processing audio with encoding: ${encoding}`);
 
-    // Configurar la solicitud para Google Speech-to-Text
+    // Configuración con detección automática de idioma
     const request = {
       audio: {
         content: audioBytes,
       },
       config: {
         encoding: encoding,
-        //sampleRateHertz: 16000, // Frecuencia de muestreo recomendada
-        languageCode: 'es-ES', // Español (España)
-        alternativeLanguageCodes: ['es-MX', 'es-CO', 'es-AR', 'es-CL', 'es-US'], // Soporte para variantes regionales
+        languageCode: 'es-ES',
+        alternativeLanguageCodes: [
+          'en-US', 'en-GB', 'es-MX', 'es-CO', 'es-AR', 'es-CL', 'es-US'
+        ],
         enableAutomaticPunctuation: true,
         model: 'default',
+        enableLanguageIdentification: true,
       },
     };
 
-    // Realizar la solicitud a Google Speech-to-Text
     const [response] = await speechClient.recognize(request);
     
-    // Extraer la transcripción
+    if (!response.results || response.results.length === 0) {
+      logger.warn('No transcription results obtained');
+      return res.status(400).json({ 
+        error: 'No speech detected in audio',
+        transcription: ''
+      });
+    }
+    
     const transcription = response.results
       .map(result => result.alternatives[0].transcript)
       .join('\n');
     
-    logger.info(`Transcripción completada: "${transcription}"`);
+    let detectedLanguage = 'es';
+    if (response.results[0].languageCode) {
+      detectedLanguage = response.results[0].languageCode.startsWith('en') ? 'en' : 'es';
+      logger.info(`Detected language: ${response.results[0].languageCode} (using: ${detectedLanguage})`);
+    }
+    
+    logger.info(`Transcription completed: "${transcription}" in language: ${detectedLanguage}`);
 
-    // Eliminar el archivo de audio temporal
     try {
       fs.unlinkSync(req.file.path);
     } catch (unlinkError) {
-      logger.error(`Error al eliminar archivo temporal: ${unlinkError.message}`);
+      logger.error(`Error deleting temporary file: ${unlinkError.message}`);
     }
 
-    res.json({ success: true, transcription });
+    res.json({ 
+      success: true, 
+      transcription,
+      detectedLanguage
+    });
   } catch (error) {
-    logger.error(`Error detallado en speech-to-text: ${error.stack}`);
+    logger.error(`Detailed error in speech-to-text: ${error.stack}`);
     
-    // Limpiar el archivo en caso de error
     if (req.file && fs.existsSync(req.file.path)) {
       try {
         fs.unlinkSync(req.file.path);
       } catch (unlinkError) {
-        logger.error(`Error al eliminar archivo temporal: ${unlinkError.message}`);
+        logger.error(`Error deleting temporary file: ${unlinkError.message}`);
       }
     }
     
     res.status(500).json({ 
-      error: 'Error al procesar el audio',
+      error: 'Error processing audio',
       details: error.message 
     });
   }
 });
 
-// Endpoint para procesar texto transcrito
+
+// ==================== PROCESS VOICE TEXT ====================
 router.post('/process-voice-text', auth, async (req, res) => {
-  const { transcription, commandType, projectId } = req.body;
+  const { transcription, commandType, projectId, detectedLanguage } = req.body;
   
   if (!transcription) {
-    return res.status(400).json({ error: 'La transcripción es requerida' });
+    return res.status(400).json({ error: 'Transcription is required' });
   }
 
+  const language = detectedLanguage || inferLanguage(transcription);
+  logger.info(`Processing voice command in language: ${language}`);
+
   try {
-    logger.info(`Procesando transcripción de voz: "${transcription}"`);
+    logger.info(`Processing transcription: "${transcription}"`);
     
-    // Obtener proyectos para el contexto
     let projects = [];
     try {
       projects = await Project.findAll();
       logger.info(`Loaded ${projects.length} projects for context`);
     } catch (error) {
-      logger.warn(`Error al obtener proyectos: ${error.message}`);
+      logger.warn(`Error loading projects: ${error.message}`);
     }
     
-    // Detectar el tipo de comando de manera más precisa
-    let detectedCommandType = commandType;
+    const isBatchCommand = detectBatchCommand(transcription, language);
     
-    if (!detectedCommandType) {
-      // Normalizar y limpiar el texto para mejor detección
-      const normalizedText = transcription.trim().toLowerCase()
-        .replace(/á/g, 'a')
-        .replace(/é/g, 'e')
-        .replace(/í/g, 'i')
-        .replace(/ó/g, 'o')
-        .replace(/ú/g, 'u')
-        .replace(/ü/g, 'u')
-        .replace(/¿/g, '')
-        .replace(/\?/g, '');
-      
-      // Expresiones regulares mejoradas para capturar comandos con mayor precisión
-      const createTaskRegex = /\b(crea|crear|nueva|nuevo|agregar|añadir|hacer|registrar)\s+(una\s+)?(tarea|actividad)\b/i;
-      const createProjectRegex = /\b(crea|crear|nuevo|nueva|agregar|añadir|registrar)\s+(un\s+)?(proyecto|plan)\b/i;
-      const searchTaskRegex = /\b(buscar|encontrar|mostrar|listar|ver)\s+(las\s+)?(tareas?|actividades)\b/i;
-      const searchProjectRegex = /\b(buscar|encontrar|mostrar|listar|ver)\s+(los\s+)?(proyectos?)\b/i;
-      const updateTaskRegex = /\b(actualizar|modificar|cambiar|marcar|editar|cambia)\s+(la\s+)?(tarea|actividad|estatus|estado)\b/i;
-      const updateProjectRegex = /\b(actualizar|modificar|cambiar|editar|cambia|modifica|actualiza)\s+(el\s+)?(proyecto|prioridad|probabilidad|título|titulo|nombre|fecha)\b/i;
-      const countTasksRegex = /\b(cuantas|cuántas|numero|número|total\s+de)\s+(tareas|actividades)\b/i;
-      const countProjectsRegex = /\b(cuantos|cuántos|numero|número|total\s+de)\s+(proyectos)\b/i;
-      
-      if (createTaskRegex.test(normalizedText)) {
-        detectedCommandType = 'createTask';
-        logger.info('Command type detected via regex: createTask');
-      } else if (createProjectRegex.test(normalizedText)) {
-        detectedCommandType = 'createProject';
-        logger.info('Command type detected via regex: createProject');
-      } else if (searchTaskRegex.test(normalizedText)) {
-        detectedCommandType = 'searchTask';
-        logger.info('Command type detected via regex: searchTask');
-      } else if (searchProjectRegex.test(normalizedText)) {
-        detectedCommandType = 'searchProject';
-        logger.info('Command type detected via regex: searchProject');
-      } else if (updateTaskRegex.test(normalizedText)) {
-        detectedCommandType = 'updateTask';
-        logger.info('Command type detected via regex: updateTask');
-      } else if (updateProjectRegex.test(normalizedText)) {
-        detectedCommandType = 'updateProject';
-        logger.info('Command type detected via regex: updateProject');
-      } else if (countTasksRegex.test(normalizedText)) {
-        detectedCommandType = 'countTasks';
-        logger.info('Command type detected via regex: countTasks');
-      } else if (countProjectsRegex.test(normalizedText)) {
-        detectedCommandType = 'countProjects';
-        logger.info('Command type detected via regex: countProjects');
-      } else {
-        // Verificación de respaldo por palabras clave simples
-        if (normalizedText.includes('tarea') && (
-            normalizedText.includes('crea') || 
-            normalizedText.includes('crear') || 
-            normalizedText.includes('nueva') || 
-            normalizedText.includes('agrega'))) {
-          detectedCommandType = 'createTask';
-          logger.info('Command type detected via keywords: createTask');
-        } else if (normalizedText.includes('proyecto') && (
-            normalizedText.includes('crea') || 
-            normalizedText.includes('crear') || 
-            normalizedText.includes('nuevo') || 
-            normalizedText.includes('agrega'))) {
-          detectedCommandType = 'createProject';
-          logger.info('Command type detected via keywords: createProject');
-        } else if ((normalizedText.includes('buscar') || normalizedText.includes('encontrar')) && 
-                  normalizedText.includes('tarea')) {
-          detectedCommandType = 'searchTask';
-          logger.info('Command type detected via keywords: searchTask');
-        } else if ((normalizedText.includes('buscar') || normalizedText.includes('encontrar')) && 
-                  normalizedText.includes('proyecto')) {
-          detectedCommandType = 'searchProject';
-          logger.info('Command type detected via keywords: searchProject');
-        } else if (normalizedText.includes('cambiar') || normalizedText.includes('actualizar') || 
-                   normalizedText.includes('cambia') || normalizedText.includes('editar') || 
-                   normalizedText.includes('edita') || normalizedText.includes('modificar')) {
-          if (normalizedText.includes('tarea') || normalizedText.includes('estado') || 
-              normalizedText.includes('estatus') || normalizedText.includes('completada') || 
-              normalizedText.includes('completado')) {
-            detectedCommandType = 'updateTask';
-            logger.info('Command type detected via keywords: updateTask');
-          } else if (normalizedText.includes('proyecto') || normalizedText.includes('prioridad') || 
-                     normalizedText.includes('probabilidad')) {
-            detectedCommandType = 'updateProject';
-            logger.info('Command type detected via keywords: updateProject');
-          }
-        } // Añadir este patrón adicional para comandos relacionados con el sistema
-        else if (normalizedText.includes('sistema') && 
-            (normalizedText.includes('tareas') || normalizedText.includes('proyectos'))) {
-            if (normalizedText.includes('tareas')) {
-                detectedCommandType = 'countTasks';
-            } else if (normalizedText.includes('proyectos')) {
-                detectedCommandType = 'countProjects';
-            }
-        }else if (normalizedText.includes('cuantas') && normalizedText.includes('tareas')) {
-          detectedCommandType = 'countTasks';
-          logger.info('Command type detected via keywords: countTasks');
-        } else if (normalizedText.includes('cuantos') && normalizedText.includes('proyectos')) {
-          detectedCommandType = 'countProjects';
-          logger.info('Command type detected via keywords: countProjects');
-        } else {
-          detectedCommandType = 'assistance';
-          logger.info('No specific command detected, defaulting to assistance');
-        }
-      }
-
-      // Detección adicional para casos complejos
-      if (detectedCommandType === 'assistance') {
-        // Buscar menciones de actualización de estado de tareas
-        if (normalizedText.includes('tarea') && (
-            normalizedText.includes('completa') || 
-            normalizedText.includes('terminar') || 
-            normalizedText.includes('finalizar') ||
-            normalizedText.includes('estado') || 
-            normalizedText.includes('estatus')
-        )) {
-          detectedCommandType = 'updateTask';
-          logger.info('Special case detection: updateTask for task status update');
-        }
-        
-        // Buscar menciones de creación de tareas en formato no estándar
-        else if (normalizedText.includes('tarea') && normalizedText.includes('proyecto')) {
-          // Podría ser una mención a crear una tarea en un proyecto específico
-          if (!normalizedText.includes('buscar') && !normalizedText.includes('encontrar') && 
-              !normalizedText.includes('mostrar') && !normalizedText.includes('listar')) {
-            detectedCommandType = 'createTask';
-            logger.info('Special case detection: createTask with project mention');
-          }
-        }
-      }
+    if (isBatchCommand) {
+      logger.info('Batch command detected - processing multiple items');
+      const batchResponse = await processBatchCommand(transcription, projects, language);
+      return res.json(batchResponse);
     }
     
+    const detectedCommandType = commandType || detectCommandType(transcription, language);
     logger.info(`Executing command type: ${detectedCommandType}`);
     
-    // Procesar el comando según su tipo
     let response;
     
     switch (detectedCommandType) {
       case 'createTask':
-        response = await processCreateTaskCommand(transcription, projectId, projects);
+        response = await processCreateTaskCommand(transcription, projectId, projects, language);
         break;
       case 'createProject':
-        response = await processCreateProjectCommand(transcription);
+        response = await processCreateProjectCommand(transcription, language);
         break;
       case 'searchTask':
-        response = await processSearchTaskCommand(transcription, projectId);
+        response = await processSearchTaskCommand(transcription, projectId, language);
         break;
       case 'searchProject':
-        response = await processSearchProjectCommand(transcription);
+        response = await processSearchProjectCommand(transcription, language);
         break;
       case 'updateTask':
-        response = await processUpdateTaskCommand(transcription, projects);
+        response = await processUpdateTaskCommand(transcription, projects, language);
         break;
       case 'updateProject':
-        response = await processUpdateProjectCommand(transcription);
+        response = await processUpdateProjectCommand(transcription, language);
         break;
       case 'countTasks':
-        response = await processCountTasksCommand();
+        response = await processCountTasksCommand(language);
         break;
       case 'countProjects':
-        response = await processCountProjectsCommand();
+        response = await processCountProjectsCommand(language);
         break;
       case 'assistance':
       default:
-        response = await processAssistanceCommand(transcription, projects);
+        // ✅ PASAR EL TOKEN DEL USUARIO AL ASISTENTE
+        response = await processAssistanceCommand(transcription, projects, language, req.headers['x-auth-token']);
         break;
     }
     
-    logger.info(`Command processed successfully, response type: ${response.success ? 'success' : 'error'}`);
+    logger.info(`Command processed successfully`);
     return res.json(response);
   } catch (error) {
     logger.error(`Error processing voice command: ${error.message}`);
     return res.status(500).json({ 
       success: false,
-      error: 'Error al procesar el comando de voz',
+      error: language === 'en' ? 'Error processing voice command' : 'Error al procesar el comando de voz',
       details: error.message 
     });
   }
 });
 
-// Procesador de comando para crear tarea - MEJORADO
-async function processCreateTaskCommand(transcription, projectId, projects = []) {
-  logger.info(`Processing create task command: "${transcription}"`);
+// ==================== INFERIR IDIOMA DEL TEXTO ====================
+function inferLanguage(text) {
+  const spanishKeywords = ['crear', 'tarea', 'proyecto', 'buscar', 'actualizar', 'cuántos', 'cuántas', 'hola', 'para', 'en', 'con'];
+  const englishKeywords = ['create', 'task', 'project', 'search', 'update', 'how many', 'hello', 'for', 'in', 'with'];
+  
+  const lowerText = text.toLowerCase();
+  
+  const spanishMatches = spanishKeywords.filter(keyword => lowerText.includes(keyword)).length;
+  const englishMatches = englishKeywords.filter(keyword => lowerText.includes(keyword)).length;
+  
+  return englishMatches > spanishMatches ? 'en' : 'es';
+}
+
+// ==================== DETECTAR COMANDO POR LOTES ====================
+function detectBatchCommand(text, language) {
+  const lowerText = text.toLowerCase();
+  
+  if (language === 'en') {
+    return (
+      (lowerText.match(/\d+\s+(tasks?|stories|items)/g) !== null) ||
+      (lowerText.split(/,|and|\n/).length > 3) ||
+      (lowerText.includes('multiple') && lowerText.includes('task')) ||
+      (lowerText.includes('several') && lowerText.includes('task'))
+    );
+  } else {
+    return (
+      (lowerText.match(/\d+\s+(tareas?|historias?|elementos?)/g) !== null) ||
+      (lowerText.split(/,|y|\n/).length > 3) ||
+      (lowerText.includes('múltiples') && lowerText.includes('tarea')) ||
+      (lowerText.includes('varias') && lowerText.includes('tarea'))
+    );
+  }
+}
+
+// ==================== PROCESAR COMANDO POR LOTES ====================
+async function processBatchCommand(transcription, projects, language) {
+  logger.info(`Processing batch command with ${projects.length} projects available`);
   
   try {
-    // Extraer detalles de la tarea usando LLM
-    let taskDetails = await extractTaskDetails(transcription);
+    if (!openaiClient) {
+      return {
+        success: false,
+        response: language === 'en' 
+          ? 'Batch processing not available' 
+          : 'Procesamiento por lotes no disponible'
+      };
+    }
+
+    const systemPrompt = language === 'en' 
+      ? `You are an AI assistant specialized in processing multiple task creation requests simultaneously.
+Available projects: ${JSON.stringify(projects.map(p => ({ id: p.id, title: p.title })))}
+
+Your task is to:
+1. Identify ALL tasks mentioned in the user's request
+2. Extract details for each task (title, description, status, completion_date, projectId)
+3. Return a JSON array with all tasks
+
+Respond ONLY with valid JSON in this format:
+{
+  "action": "batchCreateTasks",
+  "tasks": [
+    {
+      "title": "Task title",
+      "description": "Task description",
+      "status": "pending|in_progress|completed|cancelled",
+      "completion_date": "YYYY-MM-DD",
+      "projectId": number (or null)
+    }
+  ],
+  "message": "Human-friendly summary in English"
+}`
+      : `Eres un asistente de IA especializado en procesar múltiples solicitudes de creación de tareas simultáneamente.
+Proyectos disponibles: ${JSON.stringify(projects.map(p => ({ id: p.id, title: p.title })))}
+
+Tu tarea es:
+1. Identificar TODAS las tareas mencionadas en la solicitud del usuario
+2. Extraer detalles de cada tarea (título, descripción, estado, fecha_finalización, projectId)
+3. Devolver un array JSON con todas las tareas
+
+Responde SOLO con JSON válido en este formato:
+{
+  "action": "batchCreateTasks",
+  "tasks": [
+    {
+      "title": "Título de la tarea",
+      "description": "Descripción de la tarea",
+      "status": "pending|in_progress|completed|cancelled",
+      "completion_date": "YYYY-MM-DD",
+      "projectId": número (o null)
+    }
+  ],
+  "message": "Resumen amigable en español"
+}`;
+
+    const completion = await openaiClient.chat.completions.create({
+      model: "claude-sonnet-4-20250514",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: transcription }
+      ],
+      temperature: 0.1,
+      max_tokens: 2000,
+    });
+
+    const responseContent = completion.choices[0].message.content;
+    const cleanedResponse = responseContent
+      .replace(/```json\n?/g, '')
+      .replace(/```\n?/g, '')
+      .trim();
     
-    // Buscar el proyecto al que asignar la tarea
+    const batchData = JSON.parse(cleanedResponse);
+    
+    const createdTasks = [];
+    const errors = [];
+    
+    for (const taskData of batchData.tasks) {
+      try {
+        if (!taskData.projectId && projects.length > 0) {
+          taskData.projectId = projects[0].id;
+        }
+        
+        const newTask = await Task.create({
+          title: taskData.title,
+          description: taskData.description || `Task: ${taskData.title}`,
+          status: taskData.status || 'pending',
+          completion_date: taskData.completion_date || getDefaultDate(),
+          projectId: taskData.projectId,
+          creation_date: new Date()
+        });
+        
+        createdTasks.push(newTask);
+        logger.info(`Batch task created: ${newTask.id} - ${newTask.title}`);
+      } catch (error) {
+        logger.error(`Error creating batch task: ${error.message}`);
+        errors.push({ task: taskData.title, error: error.message });
+      }
+    }
+    
+    const successMessage = language === 'en'
+      ? `Successfully created ${createdTasks.length} task(s)${errors.length > 0 ? ` with ${errors.length} error(s)` : ''}.`
+      : `Se crearon exitosamente ${createdTasks.length} tarea(s)${errors.length > 0 ? ` con ${errors.length} error(es)` : ''}.`;
+    
+    return {
+      success: true,
+      action: 'batchCreateTasks',
+      createdTasks: createdTasks.map(t => t.dataValues),
+      errors,
+      response: batchData.message || successMessage
+    };
+    
+  } catch (error) {
+    logger.error(`Error in batch processing: ${error.message}`);
+    return {
+      success: false,
+      response: language === 'en'
+        ? `Error processing batch command: ${error.message}`
+        : `Error procesando comando por lotes: ${error.message}`
+    };
+  }
+}
+
+// ==================== DETECTAR TIPO DE COMANDO ====================
+function detectCommandType(transcription, language) {
+  const normalizedText = transcription.toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  
+  // ✅ PRIORIDAD 1: Comandos de análisis y contexto (para el asistente)
+  const analysisKeywords = language === 'en'
+    ? ['overdue', 'analytics', 'progress', 'summary', 'explain', 'tell me about', 'what is', 'describe']
+    : ['atrasad', 'vencid', 'analisis', 'analiticas', 'progreso', 'resumen', 'explicame', 'explica', 'cuentame', 'que es', 'describe'];
+  
+  for (const keyword of analysisKeywords) {
+    if (normalizedText.includes(keyword)) {
+      logger.info(`Analysis/context keyword detected: ${keyword} - routing to assistance`);
+      return 'assistance';
+    }
+  }
+  
+  // ✅ PRIORIDAD 2: Comandos específicos de acción
+  if (language === 'en') {
+    if (/\b(create|add|new)\s+(task|activity)\b/i.test(transcription)) return 'createTask';
+    if (/\b(create|add|new)\s+(project|plan)\b/i.test(transcription)) return 'createProject';
+    if (/\b(search|find|show|list)\s+(tasks?|activities)\b/i.test(transcription)) return 'searchTask';
+    if (/\b(search|find|show|list)\s+(projects?)\b/i.test(transcription)) return 'searchProject';
+    if (/\b(update|change|modify|mark)\s+(task|activity|status)\b/i.test(transcription)) return 'updateTask';
+    if (/\b(update|change|modify)\s+(project|priority)\b/i.test(transcription)) return 'updateProject';
+    if (/\bhow many\s+(tasks?|activities)\b/i.test(transcription) && !normalizedText.includes('overdue')) return 'countTasks';
+    if (/\bhow many\s+(projects?)\b/i.test(transcription)) return 'countProjects';
+  } else {
+    if (/\b(crear|nueva?|agregar|anadir)\s+(tarea|actividad)\b/i.test(normalizedText)) return 'createTask';
+    if (/\b(crear|nueva?|agregar|anadir)\s+(proyecto|plan)\b/i.test(normalizedText)) return 'createProject';
+    if (/\b(buscar|encontrar|mostrar|listar)\s+(tareas?|actividades)\b/i.test(normalizedText)) return 'searchTask';
+    if (/\b(buscar|encontrar|mostrar|listar)\s+(proyectos?)\b/i.test(normalizedText)) return 'searchProject';
+    if (/\b(actualizar|cambiar|modificar|marcar)\s+(tarea|actividad|estado)\b/i.test(normalizedText)) return 'updateTask';
+    if (/\b(actualizar|cambiar|modificar)\s+(proyecto|prioridad)\b/i.test(normalizedText)) return 'updateProject';
+    if (/\b(cuantas?|numero|total)\s+(tareas?|actividades)\b/i.test(normalizedText) && !normalizedText.includes('atrasad') && !normalizedText.includes('vencid')) return 'countTasks';
+    if (/\b(cuantos?|numero|total)\s+(proyectos?)\b/i.test(normalizedText)) return 'countProjects';
+  }
+  
+  return 'assistance';
+}
+
+// ==================== FUNCIÓN AUXILIAR: FECHA POR DEFECTO ====================
+function getDefaultDate() {
+  const date = new Date();
+  date.setDate(date.getDate() + 7);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// ==================== CREAR TAREA ====================
+async function processCreateTaskCommand(transcription, projectId, projects, language) {
+  logger.info(`Processing create task command in ${language}`);
+  
+  try {
     let targetProjectId = projectId;
     let targetProjectName = "";
     
     if (!targetProjectId && projects.length > 0) {
-      // Primero, intentar extraer el nombre del proyecto de la transcripción
-      const projectNameMatch = transcription.match(/(?:en|para|del|proyecto)\s+(?:el\s+)?(?:proyecto\s+)?["']?([^"'.,]+)["']?/i);
+      const projectNameMatch = transcription.match(/(?:en|para|del|in|for|project)\s+(?:el\s+)?(?:proyecto\s+)?(?:the\s+)?(?:project\s+)?["']?([^"'.,]+)["']?/i);
       let possibleProjectName = null;
+      
       if (projectNameMatch && projectNameMatch[1]) {
         possibleProjectName = projectNameMatch[1].trim();
-        logger.info(`Posible nombre de proyecto extraído: ${possibleProjectName}`);
+        logger.info(`Possible project name extracted: ${possibleProjectName}`);
       }
       
-      // Buscar proyecto por nombre exacto o parcial
       if (possibleProjectName) {
-        // Intentar buscar coincidencia exacta primero
         for (const project of projects) {
           if (project.title.toLowerCase() === possibleProjectName.toLowerCase()) {
             targetProjectId = project.id;
             targetProjectName = project.title;
-            logger.info(`Proyecto encontrado por coincidencia exacta: ${targetProjectName} (ID: ${targetProjectId})`);
+            logger.info(`Project found by exact match: ${targetProjectName} (ID: ${targetProjectId})`);
             break;
           }
         }
         
-        // Si no se encontró coincidencia exacta, buscar coincidencia parcial
         if (!targetProjectId) {
           for (const project of projects) {
             const projectTitle = project.title.toLowerCase();
             const normalizedPossibleName = possibleProjectName.toLowerCase();
             
-            if (projectTitle.includes(normalizedPossibleName) || 
-                normalizedPossibleName.includes(projectTitle)) {
+            if (projectTitle.includes(normalizedPossibleName) || normalizedPossibleName.includes(projectTitle)) {
               targetProjectId = project.id;
               targetProjectName = project.title;
-              logger.info(`Proyecto encontrado por coincidencia parcial: ${targetProjectName} (ID: ${targetProjectId})`);
+              logger.info(`Project found by partial match: ${targetProjectName} (ID: ${targetProjectId})`);
               break;
             }
           }
         }
       }
       
-      // Si aún no se encontró un proyecto, intentar buscar en el texto completo
       if (!targetProjectId) {
         const normalizedText = transcription.toLowerCase();
         
         for (const project of projects) {
           const projectTitle = project.title.toLowerCase();
-          // Verificar si el nombre del proyecto está incluido en la transcripción
           if (normalizedText.includes(projectTitle)) {
             targetProjectId = project.id;
             targetProjectName = project.title;
-            logger.info(`Proyecto identificado en el texto completo: ${targetProjectName} (ID: ${targetProjectId})`);
+            logger.info(`Project identified in full text: ${targetProjectName} (ID: ${targetProjectId})`);
             break;
           }
         }
       }
       
-      // Si no se encontró ningún proyecto pero hay proyectos disponibles, usar el primero
       if (!targetProjectId && projects.length > 0) {
         targetProjectId = projects[0].id;
         targetProjectName = projects[0].title;
-        logger.info(`No se identificó proyecto en el texto, usando el primero: ${targetProjectName} (ID: ${targetProjectId})`);
+        logger.info(`No project identified in text, using first: ${targetProjectName} (ID: ${targetProjectId})`);
       }
     } else if (targetProjectId) {
-      // Obtener el nombre del proyecto si se proporcionó un ID
       try {
         const project = await Project.findByPk(targetProjectId);
         if (project) {
           targetProjectName = project.title;
-          logger.info(`Usando proyecto especificado: ${targetProjectName} (ID: ${targetProjectId})`);
+          logger.info(`Using specified project: ${targetProjectName} (ID: ${targetProjectId})`);
         }
       } catch (error) {
-        logger.error(`Error al obtener detalles del proyecto: ${error.message}`);
+        logger.error(`Error getting project details: ${error.message}`);
       }
     } else {
-      logger.error(`No hay proyectos disponibles y no se especificó un ID de proyecto`);
+      logger.error(`No projects available and no project ID specified`);
       return {
         success: false,
-        response: 'No se pudo crear la tarea porque no hay proyectos disponibles. Por favor, crea primero un proyecto.'
+        response: language === 'en' 
+          ? 'Could not create task because no projects are available. Please create a project first.'
+          : 'No se pudo crear la tarea porque no hay proyectos disponibles. Por favor, crea primero un proyecto.'
       };
     }
     
-    // Asegurarnos de que tenemos un título para la tarea
+    const taskDetails = await extractTaskDetailsWithClaude(transcription, language);
+    
     if (!taskDetails.title || taskDetails.title.trim() === '') {
-      // Intentar extraer el título directamente del texto
-      const titleMatch = transcription.match(/(?:llamada|titulada|nombre|título|se llama)\s+["']?([^"'.,]+)["']?/i);
+      const titleMatch = transcription.match(/(?:llamada|titulada|nombre|título|called|titled|named)\s+["']?([^"'.,]+)["']?/i);
       if (titleMatch && titleMatch[1]) {
         taskDetails.title = titleMatch[1].trim();
       } else {
-        // Extraer un posible título de la transcripción si no se detectó uno
         const possibleTitle = transcription
-          .replace(/crear tarea|nueva tarea|crea una tarea|hacer tarea/i, '')
-          .replace(/en el proyecto|para el proyecto|en proyecto|para proyecto/i, '')
+          .replace(/crear tarea|nueva tarea|crea una tarea|create task|new task/i, '')
+          .replace(/en el proyecto|para el proyecto|in project|for project/i, '')
           .replace(targetProjectName, '')
           .trim();
         
         if (possibleTitle) {
-          // Limitar a las primeras palabras para un título razonable
           const words = possibleTitle.split(' ');
           taskDetails.title = words.slice(0, Math.min(5, words.length)).join(' ');
         } else {
-          taskDetails.title = 'Nueva tarea';
+          taskDetails.title = language === 'en' ? 'New task' : 'Nueva tarea';
         }
       }
     }
     
-    // Generar una descripción si no existe
     if (!taskDetails.description || taskDetails.description.trim() === '') {
-      // Generar descripción basada en el título
-      taskDetails.description = `Tarea para ${taskDetails.title.toLowerCase()}${targetProjectName ? ` en el proyecto ${targetProjectName}` : ''}.`;
+      taskDetails.description = language === 'en'
+        ? `Task for ${taskDetails.title.toLowerCase()}${targetProjectName ? ` in project ${targetProjectName}` : ''}.`
+        : `Tarea para ${taskDetails.title.toLowerCase()}${targetProjectName ? ` en el proyecto ${targetProjectName}` : ''}.`;
     }
     
-    // Asegurarnos de tener una fecha de vencimiento válida
     if (!taskDetails.completion_date) {
-      // Establecer fecha de vencimiento a una semana en el futuro
-      const oneWeek = new Date();
-      oneWeek.setDate(oneWeek.getDate() + 7);
-      taskDetails.completion_date = oneWeek.toISOString().split('T')[0];
+      taskDetails.completion_date = getDefaultDate();
     }
     
-    // Crear la tarea
     const taskData = {
       title: taskDetails.title,
       description: taskDetails.description,
@@ -527,258 +616,206 @@ async function processCreateTaskCommand(transcription, projectId, projects = [])
       creation_date: new Date()
     };
     
-    logger.info(`Creando tarea con datos: ${JSON.stringify(taskData)}`);
+    logger.info(`Creating task with data: ${JSON.stringify(taskData)}`);
     
     const newTask = await Task.create(taskData);
-    logger.info(`Tarea creada con éxito con ID: ${newTask.id}`);
+    logger.info(`Task created successfully with ID: ${newTask.id}`);
     
-    // Generar un mensaje de respuesta claro y orientado a la acción
+    const statusText = language === 'en'
+      ? (taskData.status === 'pending' ? 'pending' : taskData.status)
+      : (taskData.status === 'pending' ? 'pendiente' : taskData.status);
+    
     return {
       success: true,
       action: 'createTask',
       taskDetails: newTask.dataValues,
-      response: `He creado la tarea "${taskData.title}" en el proyecto "${targetProjectName}". La tarea tiene una fecha límite para el ${taskData.completion_date} y está en estado ${taskData.status === 'pending' ? 'pendiente' : taskData.status}.`
+      response: language === 'en'
+        ? `I've created the task "${taskData.title}" in project "${targetProjectName}". The task has a deadline of ${taskData.completion_date} and is in ${statusText} status.`
+        : `He creado la tarea "${taskData.title}" en el proyecto "${targetProjectName}". La tarea tiene una fecha límite para el ${taskData.completion_date} y está en estado ${statusText}.`
     };
   } catch (error) {
-    logger.error(`Error al crear tarea: ${error.message}`);
+    logger.error(`Error creating task: ${error.message}`);
     return {
       success: false,
-      response: `Lo siento, no pude crear la tarea debido a un error: ${error.message}. Por favor, intenta ser más específico o verifica que el proyecto mencionado exista.`
+      response: language === 'en'
+        ? `Sorry, I couldn't create the task due to an error: ${error.message}. Please try to be more specific or verify that the mentioned project exists.`
+        : `Lo siento, no pude crear la tarea debido a un error: ${error.message}. Por favor, intenta ser más específico o verifica que el proyecto mencionado exista.`
     };
   }
 }
 
-// Extraer detalles de tarea del texto - MEJORADO
-async function extractTaskDetails(transcription) {
+// ==================== EXTRAER DETALLES DE TAREA CON CLAUDE ====================
+async function extractTaskDetailsWithClaude(transcription, language) {
+  if (!openaiClient) {
+    return { title: null, description: null, status: 'pending', completion_date: null };
+  }
+  
   try {
-    if (openaiClient) {
-      try {
-        // Usar OpenAI/Claude para extraer detalles con prompt mejorado
-        const completion = await openaiClient.chat.completions.create({
-          model: "claude-3-haiku-20240307",
-          messages: [
-            { 
-              role: "system", 
-              content: `Eres un asistente especializado en extraer detalles de tareas para un sistema de gestión de proyectos.
-              Tu objetivo es identificar y extraer información específica de comandos de voz para crear tareas.
-              No inventes información que no esté claramente implícita en el texto.
-              Si no estás seguro de algún dato, déjalo como null para que el sistema use valores predeterminados.
-              
-              Los estados de tareas posibles son: "pending" (pendiente), "in_progress" (en progreso), "completed" (completada), y "cancelled" (cancelada).` 
-            },
-            { 
-              role: "user", 
-              content: `Analiza esta transcripción: "${transcription}" 
-              
-              Extrae los detalles de la tarea que se está solicitando crear. 
-              
-              Devuelve SOLO un objeto JSON con los campos:
-              - title: título de la tarea (extrae las palabras que parezcan ser el título)
-              - description: descripción (null si no está especificada)
-              - status: estado ("pending", "in_progress", "completed" o "cancelled")
-              - completion_date: fecha de vencimiento en formato YYYY-MM-DD
-              
-              Si no hay información sobre algún campo, déjalo como null.
-              Para completion_date, si se menciona un plazo como "para mañana" o "en una semana", calcula la fecha correspondiente.`
-            }
-          ],
-          temperature: 0.1, // Reducido para mayor precisión
-          max_tokens: 300,
-        });
+    const systemPrompt = language === 'en'
+      ? `You are an assistant specialized in extracting task details for a project management system.
+Your goal is to identify and extract specific information from voice commands to create tasks.
+Do not invent information that is not clearly implicit in the text.
+If you're unsure about any data, leave it as null so the system uses default values.
+
+Possible task statuses are: "pending", "in_progress", "completed", and "cancelled".`
+      : `Eres un asistente especializado en extraer detalles de tareas para un sistema de gestión de proyectos.
+Tu objetivo es identificar y extraer información específica de comandos de voz para crear tareas.
+No inventes información que no esté claramente implícita en el texto.
+Si no estás seguro de algún dato, déjalo como null para que el sistema use valores predeterminados.
+
+Los estados de tareas posibles son: "pending" (pendiente), "in_progress" (en progreso), "completed" (completada), y "cancelled" (cancelada).`;
     
-        // Extraer y analizar la respuesta
-        const responseContent = completion.choices[0].message.content;
-        
-        // Intentar extraer el JSON de la respuesta
-        const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const extractedData = JSON.parse(jsonMatch[0]);
-          logger.info(`Datos de tarea extraídos por Claude: ${JSON.stringify(extractedData)}`);
-          return extractedData;
-        } else {
-          throw new Error('No se pudo extraer JSON de la respuesta');
-        }
-      } catch (apiError) {
-        logger.error(`Error al extraer detalles de tarea con Claude: ${apiError.message}`);
-        // Continuar con la extracción basada en palabras clave
-      }
+    const userPrompt = language === 'en'
+      ? `Analyze this transcription: "${transcription}"
+
+Extract the task details that are being requested to create.
+
+Return ONLY a JSON object with the fields:
+- title: task title (extract the words that seem to be the title)
+- description: description (null if not specified)
+- status: status ("pending", "in_progress", "completed" or "cancelled")
+- completion_date: due date in YYYY-MM-DD format
+
+If there is no information about a field, leave it as null.
+For completion_date, if a deadline is mentioned like "for tomorrow" or "in a week", calculate the corresponding date.`
+      : `Analiza esta transcripción: "${transcription}"
+
+Extrae los detalles de la tarea que se está solicitando crear.
+
+Devuelve SOLO un objeto JSON con los campos:
+- title: título de la tarea (extrae las palabras que parezcan ser el título)
+- description: descripción (null si no está especificada)
+- status: estado ("pending", "in_progress", "completed" o "cancelled")
+- completion_date: fecha de vencimiento en formato YYYY-MM-DD
+
+Si no hay información sobre algún campo, déjalo como null.
+Para completion_date, si se menciona un plazo como "para mañana" o "en una semana", calcula la fecha correspondiente.`;
+    
+    const completion = await openaiClient.chat.completions.create({
+      model: "claude-sonnet-4-20250514",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ],
+      temperature: 0.1,
+      max_tokens: 300,
+    });
+    
+    const responseContent = completion.choices[0].message.content;
+    const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
+    
+    if (jsonMatch) {
+      const extractedData = JSON.parse(jsonMatch[0]);
+      logger.info(`Task details extracted by Claude: ${JSON.stringify(extractedData)}`);
+      return extractedData;
+    } else {
+      throw new Error('Could not extract JSON from response');
     }
-    
-    // Extracción basada en palabras clave (fallback mejorado)
-    const lowercaseText = transcription.toLowerCase();
-    
-    // Extraer título
-    let title = null;
-    // Buscar título después de palabras clave como "llamada", "titulada", etc.
-    const titlePatterns = [
-      /(?:tarea|actividad)\s+(?:llamada|titulada|que se llama|con nombre|con título)\s+["']?([^"'.,]+)["']?/i,
-      /(?:crear|nueva)\s+(?:tarea|actividad)\s+(?:llamada|titulada|que se llama|con nombre|con título)\s+["']?([^"'.,]+)["']?/i,
-      /(?:llamada|titulada|que se llama|con nombre|con título)\s+["']?([^"'.,]+)["']?/i
-    ];
-    
-    for (const pattern of titlePatterns) {
-      const match = transcription.match(pattern);
-      if (match && match[1]) {
-        title = match[1].trim();
-        break;
-      }
+  } catch (error) {
+    logger.error(`Error extracting task details with Claude: ${error.message}`);
+    return fallbackExtractTaskDetails(transcription, language);
+  }
+}
+
+// ==================== FALLBACK: EXTRAER DETALLES DE TAREA SIN CLAUDE ====================
+function fallbackExtractTaskDetails(transcription, language) {
+  const lowercaseText = transcription.toLowerCase();
+  
+  let title = null;
+  const titlePatterns = language === 'en'
+    ? [
+        /(?:task|activity)\s+(?:called|titled|named)\s+["']?([^"'.,]+)["']?/i,
+        /(?:create|new)\s+(?:task|activity)\s+(?:called|titled|named)\s+["']?([^"'.,]+)["']?/i,
+      ]
+    : [
+        /(?:tarea|actividad)\s+(?:llamada|titulada|que se llama|con nombre|con título)\s+["']?([^"'.,]+)["']?/i,
+        /(?:crear|nueva)\s+(?:tarea|actividad)\s+(?:llamada|titulada|que se llama|con nombre|con título)\s+["']?([^"'.,]+)["']?/i,
+      ];
+  
+  for (const pattern of titlePatterns) {
+    const match = transcription.match(pattern);
+    if (match && match[1]) {
+      title = match[1].trim();
+      break;
     }
-    
-    // Si no se encontró título por patrones específicos, intentar extraerlo del contexto
-    if (!title && (lowercaseText.includes("crear tarea") || lowercaseText.includes("nueva tarea") || 
-                  lowercaseText.includes("crea tarea") || lowercaseText.includes("crea una tarea"))) {
-      // Extraer todo después de las palabras clave y antes de posibles palabras como "en el proyecto"
-      let textAfterKeyword = '';
-      if (lowercaseText.includes("crear tarea")) {
-        textAfterKeyword = transcription.match(/crear tarea\s+(.+?)(?:\s+(?:en|para)(?:\s+el)?\s+proyecto|$)/i);
-      } else if (lowercaseText.includes("nueva tarea")) {
-        textAfterKeyword = transcription.match(/nueva tarea\s+(.+?)(?:\s+(?:en|para)(?:\s+el)?\s+proyecto|$)/i);
-      } else if (lowercaseText.includes("crea una tarea")) {
-        textAfterKeyword = transcription.match(/crea una tarea\s+(.+?)(?:\s+(?:en|para)(?:\s+el)?\s+proyecto|$)/i);
-      } else if (lowercaseText.includes("crea tarea")) {
-        textAfterKeyword = transcription.match(/crea tarea\s+(.+?)(?:\s+(?:en|para)(?:\s+el)?\s+proyecto|$)/i);
-      }
-      
-      if (textAfterKeyword && textAfterKeyword[1]) {
-        // Usar las primeras palabras como título
-        const words = textAfterKeyword[1].split(' ');
-        if (words.length > 0) {
-          title = words.slice(0, Math.min(5, words.length)).join(' ');
-        }
-      }
+  }
+  
+  let status = 'pending';
+  if (language === 'en') {
+    if (lowercaseText.includes('in progress') || lowercaseText.includes('started')) status = 'in_progress';
+    else if (lowercaseText.includes('completed') || lowercaseText.includes('done')) status = 'completed';
+    else if (lowercaseText.includes('cancelled')) status = 'cancelled';
+  } else {
+    if (lowercaseText.includes('en progreso') || lowercaseText.includes('iniciada')) status = 'in_progress';
+    else if (lowercaseText.includes('completada') || lowercaseText.includes('terminada')) status = 'completed';
+    else if (lowercaseText.includes('cancelada')) status = 'cancelled';
+  }
+  
+  let description = null;
+  let completionDate = null;
+  const today = new Date();
+  
+  if (language === 'en') {
+    if (lowercaseText.includes('tomorrow')) {
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      completionDate = formatDate(tomorrow);
+    } else if (lowercaseText.includes('next week')) {
+      const nextWeek = new Date(today);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      completionDate = formatDate(nextWeek);
     }
-    
-    // Extraer estado
-    let status = 'pending'; // Valor predeterminado
-    if (lowercaseText.includes('en progreso') || lowercaseText.includes('iniciada')) {
-      status = 'in_progress';
-    } else if (lowercaseText.includes('completada') || lowercaseText.includes('terminada') || 
-              lowercaseText.includes('finalizada') || lowercaseText.includes('hecha')) {
-      status = 'completed';
-    } else if (lowercaseText.includes('cancelada') || lowercaseText.includes('suspendida')) {
-      status = 'cancelled';
-    }
-    
-    // Extraer descripción
-    let description = null;
-    const descriptionPatterns = [
-      /descripci[oó]n:?\s+(.+?)(?:\.|$)/i,
-      /con(?:\s+la)?\s+descripci[oó]n:?\s+(.+?)(?:\.|$)/i,
-      /con\s+descripci[oó]n:?\s+(.+?)(?:\.|$)/i,
-      /que\s+describe:?\s+(.+?)(?:\.|$)/i
-    ];
-    
-    for (const pattern of descriptionPatterns) {
-      const match = transcription.match(pattern);
-      if (match && match[1]) {
-        description = match[1].trim();
-        break;
-      }
-    }
-    
-    // Si no se encontró descripción con patrones específicos, buscar después de "para"
-    if (!description && lowercaseText.includes('para')) {
-      const descriptionMatch = transcription.match(/para\s+(.+?)(?:\s+(?:en|con)(?:\s+el)?\s+proyecto|\.|\s+status|\s+estado|$)/i);
-      if (descriptionMatch && descriptionMatch[1]) {
-        // Verificar que no sea parte de "para el proyecto..."
-        const text = descriptionMatch[1].trim().toLowerCase();
-        if (!text.startsWith('el proyecto') && !text.startsWith('proyecto')) {
-          description = descriptionMatch[1].trim();
-        }
-      }
-    }
-    
-    // Extraer fecha de finalización
-    let completionDate = null;
-    const today = new Date();
-    
+  } else {
     if (lowercaseText.includes('mañana')) {
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
-      completionDate = tomorrow.toISOString().split('T')[0];
-    } else if (lowercaseText.includes('próxima semana') || lowercaseText.includes('proxima semana') || 
-              lowercaseText.includes('siguiente semana') || lowercaseText.includes('semana que viene')) {
+      completionDate = formatDate(tomorrow);
+    } else if (lowercaseText.includes('próxima semana') || lowercaseText.includes('proxima semana')) {
       const nextWeek = new Date(today);
       nextWeek.setDate(nextWeek.getDate() + 7);
-      completionDate = nextWeek.toISOString().split('T')[0];
-    } else if (lowercaseText.includes('próximo mes') || lowercaseText.includes('proximo mes') || 
-              lowercaseText.includes('siguiente mes') || lowercaseText.includes('mes que viene')) {
-      const nextMonth = new Date(today);
-      nextMonth.setMonth(nextMonth.getMonth() + 1);
-      completionDate = nextMonth.toISOString().split('T')[0];
-    } else {
-      // Buscar fechas en formato DD/MM o DD/MM/YYYY
-      const dateMatch = transcription.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
-      if (dateMatch) {
-        const day = parseInt(dateMatch[1]);
-        const month = parseInt(dateMatch[2]) - 1; // Meses en JS son 0-11
-        let year = dateMatch[3] ? parseInt(dateMatch[3]) : today.getFullYear();
-        
-        // Ajustar año si se proporcionó en formato corto
-        if (year < 100) {
-          year += year < 50 ? 2000 : 1900;
-        }
-        
-        const date = new Date(year, month, day);
-        completionDate = date.toISOString().split('T')[0];
-      }
-      // Si no se encontró fecha, usar una semana por defecto
-      else {
-        const oneWeek = new Date(today);
-        oneWeek.setDate(oneWeek.getDate() + 7);
-        completionDate = oneWeek.toISOString().split('T')[0];
-      }
+      completionDate = formatDate(nextWeek);
     }
-    
-    return {
-      title,
-      description,
-      status,
-      completion_date: completionDate
-    };
-  } catch (error) {
-    logger.error(`Error al extraer detalles de tarea: ${error.message}`);
-    // Devolver valores por defecto
-    return {
-      title: null,
-      description: null,
-      status: "pending",
-      completion_date: null
-    };
   }
+  
+  if (!completionDate) {
+    completionDate = getDefaultDate();
+  }
+  
+  return { title, description, status, completion_date: completionDate };
 }
 
-// Procesador de comando para crear proyecto - MEJORADO
-async function processCreateProjectCommand(transcription) {
-  logger.info(`Processing create project command: "${transcription}"`);
+function formatDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// ==================== CREAR PROYECTO ====================
+async function processCreateProjectCommand(transcription, language) {
+  logger.info(`Processing create project command in ${language}`);
   
   try {
-    // Extraer detalles del proyecto usando LLM
-    let projectDetails = await extractProjectDetails(transcription);
+    const projectDetails = await extractProjectDetailsWithClaude(transcription, language);
     
-    // Asegurarnos de que tenemos un título para el proyecto
     if (!projectDetails.title || projectDetails.title.trim() === '') {
-      // Intentar extraer el título directamente del texto
-      const titleMatch = transcription.match(/(?:llamado|titulado|nombre|título|se llama)\s+["']?([^"'.,]+)["']?/i);
+      const titleMatch = transcription.match(/(?:llamado|titulado|nombre|título|called|titled|named)\s+["']?([^"'.,]+)["']?/i);
       if (titleMatch && titleMatch[1]) {
         projectDetails.title = titleMatch[1].trim();
       } else {
-        // Extraer un posible título de la transcripción si no se detectó uno
         const possibleTitle = transcription
-          .replace(/crear proyecto|nuevo proyecto|crea un proyecto/i, '')
+          .replace(/crear proyecto|nuevo proyecto|create project|new project/i, '')
           .trim();
         
         if (possibleTitle) {
-          // Limitar a las primeras palabras para un título razonable
           const words = possibleTitle.split(' ');
           projectDetails.title = words.slice(0, Math.min(5, words.length)).join(' ');
         } else {
-          projectDetails.title = 'Nuevo proyecto';
+          projectDetails.title = language === 'en' ? 'New project' : 'Nuevo proyecto';
         }
       }
     }
     
-    // Verificar si ya existe un proyecto con este título
     const existingProject = await Project.findOne({
       where: {
         title: {
@@ -788,25 +825,25 @@ async function processCreateProjectCommand(transcription) {
     });
     
     if (existingProject) {
-      logger.warn(`Ya existe un proyecto con el título "${projectDetails.title}"`);
+      logger.warn(`A project with the title "${projectDetails.title}" already exists`);
       return {
         success: false,
-        response: `Ya existe un proyecto llamado "${projectDetails.title}". ¿Quieres crear un proyecto con un nombre diferente o actualizar el existente?`
+        response: language === 'en'
+          ? `A project named "${projectDetails.title}" already exists. Do you want to create a project with a different name or update the existing one?`
+          : `Ya existe un proyecto llamado "${projectDetails.title}". ¿Quieres crear un proyecto con un nombre diferente o actualizar el existente?`
       };
     }
     
-    // Generar una descripción si no existe
     if (!projectDetails.description || projectDetails.description.trim() === '') {
-      // Generar descripción basada en el título
-      projectDetails.description = `Proyecto para gestionar actividades relacionadas con ${projectDetails.title.toLowerCase()}.`;
+      projectDetails.description = language === 'en'
+        ? `Project to manage activities related to ${projectDetails.title.toLowerCase()}.`
+        : `Proyecto para gestionar actividades relacionadas con ${projectDetails.title.toLowerCase()}.`;
     }
     
-    // Asegurarnos de tener una prioridad válida
     if (!projectDetails.priority) {
       projectDetails.priority = 'medium';
     }
     
-    // Crear el proyecto
     const projectData = {
       title: projectDetails.title,
       description: projectDetails.description,
@@ -815,23 +852,29 @@ async function processCreateProjectCommand(transcription) {
       creation_date: new Date()
     };
     
-    logger.info(`Creando proyecto con datos: ${JSON.stringify(projectData)}`);
+    logger.info(`Creating project with data: ${JSON.stringify(projectData)}`);
     
     const newProject = await Project.create(projectData);
-    logger.info(`Proyecto creado con éxito con ID: ${newProject.id}`);
+    logger.info(`Project created successfully with ID: ${newProject.id}`);
     
-    // Generar un mensaje de respuesta claro y orientado a la acción
-    let responseMessage = `He creado el proyecto "${projectData.title}" con prioridad ${projectData.priority}.`;
+    const priorityText = language === 'en'
+      ? projectData.priority
+      : (projectData.priority === 'high' ? 'alta' : projectData.priority === 'low' ? 'baja' : 'media');
     
-    // Añadir información sobre la fecha de finalización si está disponible
+    let responseMessage = language === 'en'
+      ? `I've created the project "${projectData.title}" with ${priorityText} priority.`
+      : `He creado el proyecto "${projectData.title}" con prioridad ${priorityText}.`;
+    
     if (projectData.culmination_date) {
-      responseMessage += ` La fecha de finalización está establecida para el ${projectData.culmination_date}.`;
+      responseMessage += language === 'en'
+        ? ` The completion date is set for ${projectData.culmination_date}.`
+        : ` La fecha de finalización está establecida para el ${projectData.culmination_date}.`;
     }
     
-    // Sugerir al usuario que puede comenzar a añadir tareas al proyecto
-    responseMessage += ` Ya puedes empezar a añadir tareas a este proyecto.`;
+    responseMessage += language === 'en'
+      ? ` You can now start adding tasks to this project.`
+      : ` Ya puedes empezar a añadir tareas a este proyecto.`;
     
-    // Devolver el resultado exitoso con los detalles del proyecto creado
     return {
       success: true,
       action: 'createProject',
@@ -839,244 +882,94 @@ async function processCreateProjectCommand(transcription) {
       response: responseMessage
     };
   } catch (error) {
-    logger.error(`Error al crear proyecto: ${error.message}`);
+    logger.error(`Error creating project: ${error.message}`);
     return {
       success: false,
-      response: `Lo siento, no pude crear el proyecto debido a un error: ${error.message}. Por favor, intenta ser más específico.`
+      response: language === 'en'
+        ? `Sorry, I couldn't create the project due to an error: ${error.message}. Please try to be more specific.`
+        : `Lo siento, no pude crear el proyecto debido a un error: ${error.message}. Por favor, intenta ser más específico.`
     };
   }
 }
 
-// Extraer detalles de proyecto del texto - MEJORADO
-async function extractProjectDetails(transcription) {
-  try {
-    if (openaiClient) {
-      try {
-        // Usar OpenAI/Claude para extraer detalles con prompt mejorado
-        const completion = await openaiClient.chat.completions.create({
-          model: "claude-3-haiku-20240307",
-          messages: [
-            { 
-              role: "system", 
-              content: `Eres un asistente especializado en extraer detalles de proyectos para un sistema de gestión.
-              Tu objetivo es identificar y extraer información específica de comandos de voz para crear proyectos.
-              No inventes información que no esté claramente implícita en el texto.
-              Si no estás seguro de algún dato, déjalo como null para que el sistema use valores predeterminados.` 
-            },
-            { 
-              role: "user", 
-              content: `Analiza esta transcripción: "${transcription}" 
-              
-              Extrae los detalles del proyecto que se está solicitando crear. 
-              
-              Devuelve SOLO un objeto JSON con los campos:
-              - title: título del proyecto (extrae las palabras que parezcan ser el título)
-              - description: descripción (null si no está especificada)
-              - priority: prioridad ("high", "medium" o "low")
-              - culmination_date: fecha límite en formato YYYY-MM-DD (null si no está especificada)
-              
-              Si no hay información sobre algún campo, déjalo como null.
-              Para culmination_date, si se menciona un plazo como "para fin de año", calcula la fecha correspondiente.`
-            }
-          ],
-          temperature: 0.1, // Reducido para mayor precisión
-          max_tokens: 300,
-        });
-    
-        // Extraer y analizar la respuesta
-        const responseContent = completion.choices[0].message.content;
-        
-        // Intentar extraer el JSON de la respuesta
-        const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const extractedData = JSON.parse(jsonMatch[0]);
-          logger.info(`Datos extraídos por Claude: ${JSON.stringify(extractedData)}`);
-          return extractedData;
-        } else {
-          throw new Error('No se pudo extraer JSON de la respuesta');
-        }
-      } catch (apiError) {
-        logger.error(`Error al extraer detalles de proyecto con Claude: ${apiError.message}`);
-        // Continuar con la extracción basada en palabras clave
-      }
-    }
-    
-    // Extracción basada en palabras clave (fallback mejorado)
-    const lowercaseText = transcription.toLowerCase();
-    
-    // Extraer título
-    let title = null;
-    const titlePatterns = [
-      /(?:proyecto|plan)\s+(?:llamado|titulado|que se llama|con nombre|con título)\s+["']?([^"'.,]+)["']?/i,
-      /(?:crear|nuevo)\s+(?:proyecto|plan)\s+(?:llamado|titulado|que se llama|con nombre|con título)\s+["']?([^"'.,]+)["']?/i,
-      /(?:llamado|titulado|que se llama|con nombre|con título)\s+["']?([^"'.,]+)["']?/i
-    ];
-    
-    for (const pattern of titlePatterns) {
-      const match = transcription.match(pattern);
-      if (match && match[1]) {
-        title = match[1].trim();
-        break;
-      }
-    }
-    
-    // Si no se encontró título por patrones específicos, intentar extraerlo del contexto
-    if (!title && (lowercaseText.includes("crear proyecto") || lowercaseText.includes("nuevo proyecto") || 
-                  lowercaseText.includes("crea proyecto") || lowercaseText.includes("crea un proyecto"))) {
-      // Extraer todo después de las palabras clave
-      let textAfterKeyword = '';
-      if (lowercaseText.includes("crear proyecto")) {
-        textAfterKeyword = transcription.match(/crear proyecto(?:s)?\s+(.+?)(?:\.|$)/i);
-      } else if (lowercaseText.includes("nuevo proyecto")) {
-        textAfterKeyword = transcription.match(/nuevo proyecto\s+(.+?)(?:\.|$)/i);
-      } else if (lowercaseText.includes("crea un proyecto")) {
-        textAfterKeyword = transcription.match(/crea un proyecto\s+(.+?)(?:\.|$)/i);
-      } else if (lowercaseText.includes("crea proyecto")) {
-        textAfterKeyword = transcription.match(/crea proyecto\s+(.+?)(?:\.|$)/i);
-      }
-      
-      if (textAfterKeyword && textAfterKeyword[1]) {
-        // Usar las primeras palabras como título
-        const words = textAfterKeyword[1].split(' ');
-        if (words.length > 0) {
-          title = words.slice(0, Math.min(5, words.length)).join(' ');
-        }
-      }
-    }
-    
-    // Extraer prioridad
-    let priority = null;
-    if (lowercaseText.includes('alta') || lowercaseText.includes('urgente') || 
-        lowercaseText.includes('importante') || lowercaseText.includes('crítica') || 
-        lowercaseText.includes('critica')) {
-      priority = 'high';
-    } else if (lowercaseText.includes('baja') || lowercaseText.includes('menor') || 
-              lowercaseText.includes('secundaria')) {
-      priority = 'low';
-    } else if (lowercaseText.includes('media') || lowercaseText.includes('normal') || 
-              lowercaseText.includes('intermedia') || lowercaseText.includes('medio')) {
-      priority = 'medium';
-    }
-    
-    // Extraer descripción
-    let description = null;
-    const descriptionPatterns = [
-      /descripci[oó]n:?\s+(.+?)(?:\.|$)/i,
-      /con(?:\s+la)?\s+descripci[oó]n:?\s+(.+?)(?:\.|$)/i,
-      /con\s+descripci[oó]n:?\s+(.+?)(?:\.|$)/i,
-      /que\s+describe:?\s+(.+?)(?:\.|$)/i
-    ];
-    
-    for (const pattern of descriptionPatterns) {
-      const match = transcription.match(pattern);
-      if (match && match[1]) {
-        description = match[1].trim();
-        break;
-      }
-    }
-    
-    // Si no se encontró descripción con patrones específicos, buscar después de "para"
-    if (!description && lowercaseText.includes('para')) {
-      const descriptionMatch = transcription.match(/para\s+(.+?)(?:\.|$)/i);
-      if (descriptionMatch && descriptionMatch[1]) {
-        description = descriptionMatch[1].trim();
-      }
-    }
-    
-    // Extraer fecha de culminación
-    let culminationDate = null;
-    const currentYear = new Date().getFullYear();
-    
-    if (lowercaseText.includes('fin de año') || lowercaseText.includes('final de año') || 
-        lowercaseText.includes('terminar este año') || lowercaseText.includes('finalizar este año')) {
-      culminationDate = `${currentYear}-12-31`;
-    } else if (lowercaseText.includes('próximo mes') || lowercaseText.includes('proximo mes') || 
-              lowercaseText.includes('siguiente mes') || lowercaseText.includes('mes que viene')) {
-      const nextMonth = new Date();
-      nextMonth.setMonth(nextMonth.getMonth() + 1);
-      culminationDate = nextMonth.toISOString().split('T')[0];
-    } else if (lowercaseText.includes('próximo trimestre') || lowercaseText.includes('proximo trimestre') || 
-              lowercaseText.includes('siguiente trimestre')) {
-      const nextQuarter = new Date();
-      nextQuarter.setMonth(nextQuarter.getMonth() + 3);
-      culminationDate = nextQuarter.toISOString().split('T')[0];
-    } else {
-      // Buscar fechas en formato DD/MM o DD/MM/YYYY
-      const dateMatch = transcription.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
-      if (dateMatch) {
-        const day = parseInt(dateMatch[1]);
-        const month = parseInt(dateMatch[2]) - 1; // Meses en JS son 0-11
-        let year = dateMatch[3] ? parseInt(dateMatch[3]) : currentYear;
-        
-        // Ajustar año si se proporcionó en formato corto
-        if (year < 100) {
-          year += year < 50 ? 2000 : 1900;
-        }
-        
-        const date = new Date(year, month, day);
-        culminationDate = date.toISOString().split('T')[0];
-      }
-    }
-    
-    return {
-      title,
-      description,
-      priority,
-      culmination_date: culminationDate
-    };
-  } catch (error) {
-    logger.error(`Error al extraer detalles de proyecto: ${error.message}`);
-    // Devolver valores por defecto
-    return {
-      title: null,
-      description: null,
-      priority: null,
-      culmination_date: null
-    };
+// ==================== EXTRAER DETALLES DE PROYECTO CON CLAUDE ====================
+async function extractProjectDetailsWithClaude(transcription, language) {
+  if (!openaiClient) {
+    return { title: null, description: null, priority: 'medium', culmination_date: null };
   }
-}
-
-// Procesador de comando para buscar tareas - MEJORADO
-/**
- * Procesa un comando de búsqueda de tareas basado en una transcripción y un ID de proyecto.
- * 
- * @async
- * @function processSearchTaskCommand
- * @param {string} transcription - La transcripción del comando de búsqueda proporcionada por el usuario.
- * @param {number} projectId - El ID del proyecto asociado al comando de búsqueda.
- * @returns {Promise<Object>} Un objeto que contiene el resultado de la búsqueda, incluyendo:
- * - `success` {boolean}: Indica si la operación fue exitosa.
- * - `action` {string}: La acción realizada, en este caso 'searchTasks'.
- * - `searchParams` {Object}: Los parámetros de búsqueda extraídos de la transcripción.
- * - `searchResults` {Array<Object>}: Una lista de tareas que coinciden con los criterios de búsqueda.
- * - `response` {string}: Un mensaje de respuesta claro para el usuario.
- * 
- * @throws {Error} Si ocurre un error durante el procesamiento o la búsqueda de tareas.
- * 
- * @description
- * Esta función utiliza un modelo de lenguaje (LLM) para extraer parámetros de búsqueda de la transcripción
- * proporcionada por el usuario. Luego construye una consulta basada en esos parámetros y busca tareas
- * en la base de datos que coincidan con los criterios. Los resultados se formatean y se genera un mensaje
- * de respuesta adecuado para el usuario.
- * 
- * Los parámetros de búsqueda pueden incluir:
- * - `searchTerm`: Un término de búsqueda para buscar en los títulos y descripciones de las tareas.
- * - `status`: El estado de las tareas (por ejemplo, 'pending', 'in_progress', 'completed', 'cancelled').
- * - `projectId`: El ID del proyecto al que pertenecen las tareas.
- * 
- * La búsqueda está limitada a un máximo de 10 resultados por razones de rendimiento.
- */
-async function processSearchTaskCommand(transcription, projectId) {
-  logger.info(`Processing search task command: "${transcription}"`);
   
   try {
-    // Extraer parámetros de búsqueda usando LLM
-    let searchParams = await extractSearchParams(transcription, projectId);
+    const systemPrompt = language === 'en'
+      ? `You are an assistant specialized in extracting project details for a management system.
+Your goal is to identify and extract specific information from voice commands to create projects.
+Do not invent information that is not clearly implicit in the text.
+If you're unsure about any data, leave it as null so the system uses default values.`
+      : `Eres un asistente especializado en extraer detalles de proyectos para un sistema de gestión.
+Tu objetivo es identificar y extraer información específica de comandos de voz para crear proyectos.
+No inventes información que no esté claramente implícita en el texto.
+Si no estás seguro de algún dato, déjalo como null para que el sistema use valores predeterminados.`;
     
-    // Construir la consulta
+    const userPrompt = language === 'en'
+      ? `Analyze this transcription: "${transcription}"
+
+Extract the project details that are being requested to create.
+
+Return ONLY a JSON object with the fields:
+- title: project title (extract the words that seem to be the title)
+- description: description (null if not specified)
+- priority: priority ("high", "medium" or "low")
+- culmination_date: deadline in YYYY-MM-DD format (null if not specified)
+
+If there is no information about a field, leave it as null.
+For culmination_date, if a deadline is mentioned like "by end of year", calculate the corresponding date.`
+      : `Analiza esta transcripción: "${transcription}"
+
+Extrae los detalles del proyecto que se está solicitando crear.
+
+Devuelve SOLO un objeto JSON con los campos:
+- title: título del proyecto (extrae las palabras que parezcan ser el título)
+- description: descripción (null si no está especificada)
+- priority: prioridad ("high", "medium" o "low")
+- culmination_date: fecha límite en formato YYYY-MM-DD (null si no está especificada)
+
+Si no hay información sobre algún campo, déjalo como null.
+Para culmination_date, si se menciona un plazo como "para fin de año", calcula la fecha correspondiente.`;
+    
+    const completion = await openaiClient.chat.completions.create({
+      model: "claude-sonnet-4-20250514",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ],
+      temperature: 0.1,
+      max_tokens: 300,
+    });
+    
+    const responseContent = completion.choices[0].message.content;
+    const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
+    
+    if (jsonMatch) {
+      const extractedData = JSON.parse(jsonMatch[0]);
+      logger.info(`Project details extracted by Claude: ${JSON.stringify(extractedData)}`);
+      return extractedData;
+    } else {
+      throw new Error('Could not extract JSON from response');
+    }
+  } catch (error) {
+    logger.error(`Error extracting project details with Claude: ${error.message}`);
+    return { title: null, description: null, priority: 'medium', culmination_date: null };
+  }
+}
+
+// ==================== BUSCAR TAREAS ====================
+async function processSearchTaskCommand(transcription, projectId, language) {
+  logger.info(`Processing search task command in ${language}`);
+  
+  try {
+    const searchParams = await extractSearchParams(transcription, projectId, language);
+    
     const whereClause = {};
     
-    // Si se especifica un término de búsqueda, agregarlo a la cláusula WHERE
     if (searchParams.searchTerm) {
       whereClause[Op.or] = [
         { title: { [Op.iLike]: `%${searchParams.searchTerm}%` } },
@@ -1084,19 +977,16 @@ async function processSearchTaskCommand(transcription, projectId) {
       ];
     }
     
-    // Si se especifica un estado, agregarlo a la cláusula WHERE
     if (searchParams.status) {
       whereClause.status = searchParams.status;
     }
     
-    // Si se especifica un ID de proyecto, agregarlo a la cláusula WHERE
     if (searchParams.projectId) {
       whereClause.projectId = searchParams.projectId;
     }
     
-    logger.info(`Buscando tareas con criterios: ${JSON.stringify(whereClause)}`);
+    logger.info(`Searching tasks with criteria: ${JSON.stringify(whereClause)}`);
     
-    // Ejecutar la búsqueda
     const tasks = await Task.findAll({
       where: whereClause,
       include: [
@@ -1105,57 +995,60 @@ async function processSearchTaskCommand(transcription, projectId) {
           attributes: ['id', 'title']
         }
       ],
-      limit: 10 // Limitar resultados por rendimiento
+      limit: 10
     });
     
-    logger.info(`Se encontraron ${tasks.length} tareas coincidentes`);
+    logger.info(`Found ${tasks.length} matching tasks`);
     
-    // Formatear resultados
     const searchResults = tasks.map(task => ({
       id: task.id,
       title: task.title,
       description: task.description,
       status: task.status,
       completion_date: task.completion_date,
-      projectName: task.Project ? task.Project.title : 'Desconocido'
+      projectName: task.Project ? task.Project.title : (language === 'en' ? 'Unknown' : 'Desconocido')
     }));
     
-    // Generar mensaje de respuesta claro
     let responseMessage;
     
-    // Si no se encontraron resultados, generar un mensaje adecuado
     if (searchResults.length === 0) {
       if (searchParams.searchTerm) {
-        // No se encontraron tareas relacionadas con el término de búsqueda
-        responseMessage = `No encontré ninguna tarea relacionada con "${searchParams.searchTerm}". ¿Quieres probar con otros términos de búsqueda?`;
+        responseMessage = language === 'en'
+          ? `I didn't find any tasks related to "${searchParams.searchTerm}". Do you want to try other search terms?`
+          : `No encontré ninguna tarea relacionada con "${searchParams.searchTerm}". ¿Quieres probar con otros términos de búsqueda?`;
       } else {
-        // No se encontraron tareas con los criterios proporcionados
-        responseMessage = `No encontré ninguna tarea que coincida con tu búsqueda. Intenta con otros criterios o crea nuevas tareas.`;
+        responseMessage = language === 'en'
+          ? `I didn't find any tasks matching your search. Try other criteria or create new tasks.`
+          : `No encontré ninguna tarea que coincida con tu búsqueda. Intenta con otros criterios o crea nuevas tareas.`;
       }
     } else {
-      // Si se encontraron resultados, generar un mensaje con los detalles
-      responseMessage = `He encontrado ${searchResults.length} tarea${searchResults.length === 1 ? '' : 's'}`;
+      responseMessage = language === 'en'
+        ? `I found ${searchResults.length} task${searchResults.length === 1 ? '' : 's'}`
+        : `He encontrado ${searchResults.length} tarea${searchResults.length === 1 ? '' : 's'}`;
       
-      // Incluir el término de búsqueda en el mensaje si está disponible
       if (searchParams.searchTerm) {
-        responseMessage += ` relacionada${searchResults.length === 1 ? '' : 's'} con "${searchParams.searchTerm}"`;
+        responseMessage += language === 'en'
+          ? ` related to "${searchParams.searchTerm}"`
+          : ` relacionada${searchResults.length === 1 ? '' : 's'} con "${searchParams.searchTerm}"`;
       }
       
-      // Incluir el estado en el mensaje si está disponible
       if (searchParams.status) {
-        const statusText = {
-          'pending': 'pendiente',
-          'in_progress': 'en progreso',
-          'completed': 'completada',
-          'cancelled': 'cancelada'
-        }[searchParams.status] || searchParams.status;
+        const statusText = language === 'en'
+          ? searchParams.status
+          : {
+              'pending': 'pendiente',
+              'in_progress': 'en progreso',
+              'completed': 'completada',
+              'cancelled': 'cancelada'
+            }[searchParams.status] || searchParams.status;
         
-        responseMessage += ` con estado ${statusText}`;
+        responseMessage += language === 'en'
+          ? ` with ${statusText} status`
+          : ` con estado ${statusText}`;
       }
       
-      responseMessage += `. Las tareas son:`;
+      responseMessage += language === 'en' ? `. The tasks are:` : `. Las tareas son:`;
       
-      // Agregar resumen de las primeras 3 tareas
       const summaryCount = Math.min(3, searchResults.length);
       for (let i = 0; i < summaryCount; i++) {
         const task = searchResults[i];
@@ -1163,8 +1056,9 @@ async function processSearchTaskCommand(transcription, projectId) {
       }
       
       if (searchResults.length > summaryCount) {
-        // Indicar que hay más tareas que las mostradas en el resumen
-        responseMessage += `\n...y ${searchResults.length - summaryCount} más.`;
+        responseMessage += language === 'en'
+          ? `\n...and ${searchResults.length - summaryCount} more.`
+          : `\n...y ${searchResults.length - summaryCount} más.`;
       }
     }
     
@@ -1176,30 +1070,79 @@ async function processSearchTaskCommand(transcription, projectId) {
       response: responseMessage
     };
   } catch (error) {
-    // Manejar errores durante la búsqueda de tareas
-    logger.error(`Error al buscar tareas: ${error.message}`);
+    logger.error(`Error searching tasks: ${error.message}`);
     return {
       success: false,
-      response: `Lo siento, no pude completar la búsqueda debido a un error: ${error.message}. Por favor, intenta con una consulta diferente.`
+      response: language === 'en'
+        ? `Sorry, I couldn't complete the search due to an error: ${error.message}. Please try a different query.`
+        : `Lo siento, no pude completar la búsqueda debido a un error: ${error.message}. Por favor, intenta con una consulta diferente.`
     };
   }
 }
 
-// Procesador para buscar proyectos - NUEVO
-async function processSearchProjectCommand(transcription) {
-  logger.info(`Processing search project command: "${transcription}"`);
+// ==================== EXTRAER PARÁMETROS DE BÚSQUEDA ====================
+async function extractSearchParams(transcription, projectId, language) {
+  const lowercaseText = transcription.toLowerCase();
+  
+  let searchTerm = null;
+  const keywords = language === 'en'
+    ? ['search', 'find', 'show', 'list', 'view', 'related', 'about', 'with']
+    : ['buscar', 'encontrar', 'mostrar', 'listar', 'ver', 'relacionadas', 'sobre', 'que tengan', 'de', 'con'];
+  
+  for (const keyword of keywords) {
+    if (lowercaseText.includes(keyword)) {
+      const regex = new RegExp(`${keyword}\\s+(?:tasks?|tareas?|activities|actividades)?\\s+(?:about|sobre|de|con|related|relacionadas)?\\s+["']?([^"'.,]+)["']?`, 'i');
+      const match = transcription.match(regex);
+      
+      if (match && match[1]) {
+        searchTerm = match[1].trim();
+        break;
+      }
+    }
+  }
+  
+  if (!searchTerm && (lowercaseText.includes('tasks') || lowercaseText.includes('tareas'))) {
+    const afterTasksMatch = transcription.match(/(?:tasks|tareas)\s+(?:de|sobre|con|of|about|related)?\s+(.+?)(?:\.|$)/i);
+    if (afterTasksMatch) {
+      searchTerm = afterTasksMatch[1].trim();
+    }
+  }
+  
+  let status = null;
+  if (language === 'en') {
+    if (lowercaseText.includes('pending')) status = 'pending';
+    else if (lowercaseText.includes('in progress')) status = 'in_progress';
+    else if (lowercaseText.includes('completed') || lowercaseText.includes('done')) status = 'completed';
+    else if (lowercaseText.includes('cancelled')) status = 'cancelled';
+  } else {
+    if (lowercaseText.includes('pendiente')) status = 'pending';
+    else if (lowercaseText.includes('en progreso')) status = 'in_progress';
+    else if (lowercaseText.includes('completada') || lowercaseText.includes('terminada')) status = 'completed';
+    else if (lowercaseText.includes('cancelada')) status = 'cancelled';
+  }
+  
+  return {
+    searchTerm,
+    status,
+    projectId
+  };
+}
+
+// ==================== BUSCAR PROYECTOS ====================
+async function processSearchProjectCommand(transcription, language) {
+  logger.info(`Processing search project command in ${language}`);
   
   try {
-    // Extraer término de búsqueda
     let searchTerm = null;
-    const searchTermPattern = /(?:buscar|encontrar|mostrar|listar|ver)\s+(?:proyectos?|planes?)?(?:\s+(?:sobre|de|con|relacionad[oa]s?\s+con))?\s+["']?([^"'.,]+)["']?/i;
+    const searchTermPattern = language === 'en'
+      ? /(?:search|find|show|list|view)\s+(?:projects?)?(?:\s+(?:about|related to|with))?\s+["']?([^"'.,]+)["']?/i
+      : /(?:buscar|encontrar|mostrar|listar|ver)\s+(?:proyectos?|planes?)?(?:\s+(?:sobre|de|con|relacionad[oa]s?\s+con))?\s+["']?([^"'.,]+)["']?/i;
     
     const match = transcription.match(searchTermPattern);
     if (match && match[1]) {
       searchTerm = match[1].trim();
     } else {
-      // Intentar extraer después de "proyectos"
-      const afterProjectsMatch = transcription.match(/proyectos\s+(?:sobre|de|con|relacionados?\s+con)?\s+["']?([^"'.,]+)["']?/i);
+      const afterProjectsMatch = transcription.match(/(?:projects|proyectos)\s+(?:about|sobre|de|con|related to|relacionados?\s+con)?\s+["']?([^"'.,]+)["']?/i);
       if (afterProjectsMatch && afterProjectsMatch[1]) {
         searchTerm = afterProjectsMatch[1].trim();
       }
@@ -1208,13 +1151,14 @@ async function processSearchProjectCommand(transcription) {
     if (!searchTerm) {
       return {
         success: false,
-        response: `No pude identificar qué criterios usar para buscar proyectos. Por favor, especifica qué proyectos quieres encontrar.`
+        response: language === 'en'
+          ? `I couldn't identify what criteria to use to search for projects. Please specify which projects you want to find.`
+          : `No pude identificar qué criterios usar para buscar proyectos. Por favor, especifica qué proyectos quieres encontrar.`
       };
     }
     
-    logger.info(`Buscando proyectos con término: ${searchTerm}`);
+    logger.info(`Searching projects with term: ${searchTerm}`);
     
-    // Ejecutar la búsqueda
     const projects = await Project.findAll({
       where: {
         [Op.or]: [
@@ -1230,9 +1174,8 @@ async function processSearchProjectCommand(transcription) {
       ]
     });
     
-    logger.info(`Se encontraron ${projects.length} proyectos coincidentes`);
+    logger.info(`Found ${projects.length} matching projects`);
     
-    // Formatear resultados
     const searchResults = projects.map(project => {
       const taskCount = project.Tasks ? project.Tasks.length : 0;
       return {
@@ -1245,17 +1188,25 @@ async function processSearchProjectCommand(transcription) {
       };
     });
     
-    // Generar mensaje de respuesta claro
     let responseMessage;
     
     if (searchResults.length === 0) {
-      responseMessage = `No encontré ningún proyecto relacionado con "${searchTerm}". ¿Quieres probar con otros términos de búsqueda o crear un nuevo proyecto?`;
+      responseMessage = language === 'en'
+        ? `I didn't find any projects related to "${searchTerm}". Do you want to try other search terms or create a new project?`
+        : `No encontré ningún proyecto relacionado con "${searchTerm}". ¿Quieres probar con otros términos de búsqueda o crear un nuevo proyecto?`;
     } else {
-      responseMessage = `He encontrado ${searchResults.length} proyecto${searchResults.length === 1 ? '' : 's'} relacionado${searchResults.length === 1 ? '' : 's'} con "${searchTerm}":`;
+      responseMessage = language === 'en'
+        ? `I found ${searchResults.length} project${searchResults.length === 1 ? '' : 's'} related to "${searchTerm}":`
+        : `He encontrado ${searchResults.length} proyecto${searchResults.length === 1 ? '' : 's'} relacionado${searchResults.length === 1 ? '' : 's'} con "${searchTerm}":`;
       
-      // Agregar resumen de proyectos encontrados
       for (const project of searchResults) {
-        responseMessage += `\n- "${project.title}" (prioridad: ${project.priority || 'no especificada'}) con ${project.taskCount} tarea${project.taskCount === 1 ? '' : 's'}`;
+        const priorityText = language === 'en'
+          ? project.priority || 'not specified'
+          : (project.priority === 'high' ? 'alta' : project.priority === 'low' ? 'baja' : project.priority === 'medium' ? 'media' : 'no especificada');
+        
+        responseMessage += language === 'en'
+          ? `\n- "${project.title}" (priority: ${priorityText}) with ${project.taskCount} task${project.taskCount === 1 ? '' : 's'}`
+          : `\n- "${project.title}" (prioridad: ${priorityText}) con ${project.taskCount} tarea${project.taskCount === 1 ? '' : 's'}`;
       }
     }
     
@@ -1267,191 +1218,77 @@ async function processSearchProjectCommand(transcription) {
       response: responseMessage
     };
   } catch (error) {
-    logger.error(`Error al buscar proyectos: ${error.message}`);
+    logger.error(`Error searching projects: ${error.message}`);
     return {
       success: false,
-      response: `Lo siento, no pude completar la búsqueda de proyectos debido a un error: ${error.message}. Por favor, intenta con una consulta diferente.`
+      response: language === 'en'
+        ? `Sorry, I couldn't complete the project search due to an error: ${error.message}. Please try a different query.`
+        : `Lo siento, no pude completar la búsqueda de proyectos debido a un error: ${error.message}. Por favor, intenta con una consulta diferente.`
     };
   }
 }
 
-// Extraer parámetros de búsqueda del texto - MEJORADO
-async function extractSearchParams(transcription, projectId) {
-  try {
-    if (openaiClient) {
-      try {
-        // Usar OpenAI/Claude para extraer parámetros con prompt mejorado
-        const completion = await openaiClient.chat.completions.create({
-          model: "claude-3-haiku-20240307",
-          messages: [
-            { 
-              role: "system", 
-              content: `Eres un asistente especializado en extraer parámetros de búsqueda para un sistema de gestión de tareas.
-              Tu objetivo es analizar comandos de voz e identificar criterios de búsqueda.
-              No inventes información que no esté claramente implícita en el texto.` 
-            },
-            { 
-              role: "user", 
-              content: `Analiza esta transcripción: "${transcription}" 
-              
-              Extrae los criterios de búsqueda para tareas, que pueden incluir:
-              - searchTerm: palabras clave para buscar en el título o descripción
-              - status: estado de las tareas ("pending", "in_progress", "completed", "cancelled")
-              
-              Devuelve SOLO un objeto JSON con estos campos. Si algún criterio no está presente, déjalo como null o no lo incluyas.
-              Si se mencionan palabras como "marketing", "desarrollo", etc., estas son probablemente términos de búsqueda.
-              Si se mencionan estados como "pendiente" o "completada", extrae el estado correspondiente.`
-            }
-          ],
-          temperature: 0.1, // Reducido para mayor precisión
-          max_tokens: 300,
-        });
-    
-        // Extraer y analizar la respuesta
-        const responseContent = completion.choices[0].message.content;
-        
-        // Intentar extraer el JSON de la respuesta
-        const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const extractedData = JSON.parse(jsonMatch[0]);
-          logger.info(`Parámetros de búsqueda extraídos por Claude: ${JSON.stringify(extractedData)}`);
-          
-          // Añadir projectId de la solicitud si existe
-          if (projectId) {
-            extractedData.projectId = projectId;
-          }
-          
-          return extractedData;
-        } else {
-          throw new Error('No se pudo extraer JSON de la respuesta');
-        }
-      } catch (apiError) {
-        logger.error(`Error al extraer parámetros de búsqueda con Claude: ${apiError.message}`);
-        // Continuar con la extracción basada en palabras clave
-      }
-    }
-    
-    // Extracción basada en palabras clave (fallback mejorado)
-    const lowercaseText = transcription.toLowerCase();
-    
-    // Extraer término de búsqueda
-    let searchTerm = null;
-    const keywords = [
-      'buscar', 'encontrar', 'mostrar', 'listar', 'ver', 
-      'relacionadas', 'sobre', 'que tengan', 'de', 'con'
-    ];
-    
-    for (const keyword of keywords) {
-      if (lowercaseText.includes(keyword)) {
-        const regex = new RegExp(`${keyword}\\s+(?:tareas?|actividades)?\\s+(?:sobre|de|con|relacionadas)?\\s+["']?([^"'.,]+)["']?`, 'i');
-        const match = transcription.match(regex);
-        
-        if (match && match[1]) {
-          searchTerm = match[1].trim();
-          break;
-        }
-      }
-    }
-    
-    // Si aún no encontramos un término, buscar palabras clave comunes después de "tareas"
-    if (!searchTerm && lowercaseText.includes('tareas')) {
-      const afterTasksMatch = transcription.match(/tareas\s+(?:de|sobre|con|relacionadas)?\s+(.+?)(?:\.|$)/i);
-      if (afterTasksMatch) {
-        searchTerm = afterTasksMatch[1].trim();
-      }
-    }
-    
-    // Extraer estado
-    let status = null;
-    if (lowercaseText.includes('pendiente')) status = 'pending';
-    else if (lowercaseText.includes('en progreso')) status = 'in_progress';
-    else if (lowercaseText.includes('completada') || lowercaseText.includes('terminada')) status = 'completed';
-    else if (lowercaseText.includes('cancelada')) status = 'cancelled';
-    
-    return {
-      searchTerm,
-      status,
-      projectId
-    };
-  } catch (error) {
-    logger.error(`Error al extraer parámetros de búsqueda: ${error.message}`);
-    // Devolver valores por defecto
-    return {
-      searchTerm: null,
-      status: null,
-      projectId
-    };
-  }
-}
-
-// Procesador de comando para actualizar tarea - MEJORADO
-async function processUpdateTaskCommand(transcription, projects = []) {
-  logger.info(`Processing update task command: "${transcription}"`);
+// ==================== ACTUALIZAR TAREA ====================
+async function processUpdateTaskCommand(transcription, projects, language) {
+  logger.info(`Processing update task command in ${language}`);
   
   try {
-    // Analizar si se menciona un proyecto específico
     let projectTitle = null;
     let projectId = null;
     
-    const projectMention = transcription.match(/(?:proyecto|plan)\s+["']?([^"'.,]+)["']?/i);
+    const projectMention = transcription.match(/(?:proyecto|plan|project|plan)\s+["']?([^"'.,]+)["']?/i);
     if (projectMention && projectMention[1]) {
       projectTitle = projectMention[1].trim();
-      logger.info(`Se mencionó el proyecto: ${projectTitle}`);
+      logger.info(`Project mentioned: ${projectTitle}`);
       
-      // Buscar el proyecto por título
       if (projects && projects.length > 0) {
         for (const project of projects) {
           if (project.title.toLowerCase() === projectTitle.toLowerCase() || 
               project.title.toLowerCase().includes(projectTitle.toLowerCase()) || 
               projectTitle.toLowerCase().includes(project.title.toLowerCase())) {
             projectId = project.id;
-            projectTitle = project.title; // Usar el título real del proyecto
-            logger.info(`Proyecto identificado: ${projectTitle} (ID: ${projectId})`);
+            projectTitle = project.title;
+            logger.info(`Project identified: ${projectTitle} (ID: ${projectId})`);
             break;
           }
         }
       }
     }
     
-    // Extraer detalles de la actualización usando LLM
-    let updateDetails = await extractUpdateDetails(transcription);
+    let updateDetails = await extractUpdateDetails(transcription, language);
     
     if (!updateDetails.taskIdentifier) {
-      // Intentar extraer el identificador de la tarea directamente
-      const taskMention = transcription.match(/(?:tarea|actividad)\s+["']?([^"'.,]+)["']?/i);
+      const taskMention = transcription.match(/(?:tarea|actividad|task|activity)\s+["']?([^"'.,]+)["']?/i);
       if (taskMention && taskMention[1]) {
         updateDetails.taskIdentifier = taskMention[1].trim();
-        logger.info(`Identificador de tarea extraído manualmente: ${updateDetails.taskIdentifier}`);
+        logger.info(`Task identifier extracted manually: ${updateDetails.taskIdentifier}`);
       } else {
-        logger.error('No se encontró identificador de tarea en el comando');
+        logger.error('No task identifier found in command');
         return {
           success: false,
-          response: 'No pude identificar qué tarea deseas actualizar. Por favor, menciona el nombre o ID de la tarea que quieres modificar.'
+          response: language === 'en'
+            ? 'I couldn\'t identify which task you want to update. Please mention the name or ID of the task you want to modify.'
+            : 'No pude identificar qué tarea deseas actualizar. Por favor, menciona el nombre o ID de la tarea que quieres modificar.'
         };
       }
     }
     
-    logger.info(`Buscando tarea con identificador: ${updateDetails.taskIdentifier}`);
+    logger.info(`Searching for task with identifier: ${updateDetails.taskIdentifier}`);
     
-    // Buscar la tarea a actualizar
     let task;
     let whereClause = {};
     
     if (!isNaN(updateDetails.taskIdentifier)) {
-      // Si el identificador es un número, buscar por ID
       task = await Task.findByPk(parseInt(updateDetails.taskIdentifier), {
         include: [{ model: Project }]
       });
     } else {
-      // Si no, buscar por título con diferentes estrategias
-      // 1. Búsqueda exacta por título
       whereClause = {
         title: {
           [Op.iLike]: updateDetails.taskIdentifier
         }
       };
       
-      // Añadir filtro por proyecto si está disponible
       if (projectId) {
         whereClause.projectId = projectId;
       }
@@ -1461,7 +1298,6 @@ async function processUpdateTaskCommand(transcription, projects = []) {
         include: [{ model: Project }]
       });
       
-      // 2. Si no se encontró, buscar coincidencia parcial
       if (!task) {
         whereClause = {
           title: {
@@ -1479,7 +1315,6 @@ async function processUpdateTaskCommand(transcription, projects = []) {
         });
       }
       
-      // 3. Si aún no se encuentra, intentar coincidencia con palabras clave
       if (!task) {
         const keywords = updateDetails.taskIdentifier.split(' ');
         if (keywords.length > 0) {
@@ -1502,13 +1337,11 @@ async function processUpdateTaskCommand(transcription, projects = []) {
           });
           
           if (possibleTasks.length > 0) {
-            // Elegir la primera tarea que coincida más con el identificador original
             task = possibleTasks[0];
             for (const possibleTask of possibleTasks) {
               const taskTitle = possibleTask.title.toLowerCase();
               const taskIdentifier = updateDetails.taskIdentifier.toLowerCase();
               
-              // Contar cuántas palabras del identificador aparecen en el título
               let matchCount = 0;
               for (const word of keywords) {
                 if (taskTitle.includes(word.toLowerCase())) {
@@ -1516,7 +1349,6 @@ async function processUpdateTaskCommand(transcription, projects = []) {
                 }
               }
               
-              // Actualizar la tarea si encuentra una mejor coincidencia
               if (matchCount > 0) {
                 task = possibleTask;
                 break;
@@ -1528,58 +1360,56 @@ async function processUpdateTaskCommand(transcription, projects = []) {
     }
     
     if (!task) {
-      logger.error(`No se encontró ninguna tarea que coincida con: ${updateDetails.taskIdentifier}`);
+      logger.error(`No task found matching: ${updateDetails.taskIdentifier}`);
       return {
         success: false,
-        response: `No encontré ninguna tarea que coincida con "${updateDetails.taskIdentifier}". Por favor, verifica el nombre o ID de la tarea e intenta de nuevo.`
+        response: language === 'en'
+          ? `I didn't find any task matching "${updateDetails.taskIdentifier}". Please verify the task name or ID and try again.`
+          : `No encontré ninguna tarea que coincida con "${updateDetails.taskIdentifier}". Por favor, verifica el nombre o ID de la tarea e intenta de nuevo.`
       };
     }
     
-    logger.info(`Tarea encontrada: ${task.id} - ${task.title}`);
+    logger.info(`Task found: ${task.id} - ${task.title}`);
     
-    // Asegurarse de que hay actualizaciones para aplicar
     if (!updateDetails.updates || Object.keys(updateDetails.updates).length === 0) {
-      // Si no se especificaron actualizaciones específicas pero se menciona un cambio de estado
       const lowercaseText = transcription.toLowerCase();
       
-      if (lowercaseText.includes('completa') || 
-          lowercaseText.includes('completar') || 
-          lowercaseText.includes('completada') || 
-          lowercaseText.includes('completado') || 
-          lowercaseText.includes('finalizar') || 
-          lowercaseText.includes('terminar')) {
+      if (lowercaseText.includes('completa') || lowercaseText.includes('complete') ||
+          lowercaseText.includes('completar') || lowercaseText.includes('completada') || 
+          lowercaseText.includes('completado') || lowercaseText.includes('completed') ||
+          lowercaseText.includes('finalizar') || lowercaseText.includes('finish') ||
+          lowercaseText.includes('terminar') || lowercaseText.includes('done')) {
         updateDetails.updates = { status: 'completed' };
-        logger.info('Se detectó la intención de marcar como completada, aplicando actualización de estado');
-      } else if (lowercaseText.includes('progreso') || 
-                lowercaseText.includes('iniciar') || 
-                lowercaseText.includes('comenzar') || 
+        logger.info('Detected intention to mark as completed, applying status update');
+      } else if (lowercaseText.includes('progreso') || lowercaseText.includes('progress') ||
+                lowercaseText.includes('iniciar') || lowercaseText.includes('start') ||
+                lowercaseText.includes('comenzar') || lowercaseText.includes('begin') ||
                 lowercaseText.includes('empezar')) {
         updateDetails.updates = { status: 'in_progress' };
-        logger.info('Se detectó la intención de marcar como en progreso, aplicando actualización de estado');
-      } else if (lowercaseText.includes('cancelar') || 
-                lowercaseText.includes('cancelada') || 
-                lowercaseText.includes('cancelado') || 
-                lowercaseText.includes('suspender')) {
+        logger.info('Detected intention to mark as in progress, applying status update');
+      } else if (lowercaseText.includes('cancelar') || lowercaseText.includes('cancel') ||
+                lowercaseText.includes('cancelada') || lowercaseText.includes('cancelled') ||
+                lowercaseText.includes('cancelado') || lowercaseText.includes('canceled') ||
+                lowercaseText.includes('suspender') || lowercaseText.includes('suspend')) {
         updateDetails.updates = { status: 'cancelled' };
-        logger.info('Se detectó la intención de marcar como cancelada, aplicando actualización de estado');
-      } else if (lowercaseText.includes('pendiente')) {
+        logger.info('Detected intention to mark as cancelled, applying status update');
+      } else if (lowercaseText.includes('pendiente') || lowercaseText.includes('pending')) {
         updateDetails.updates = { status: 'pending' };
-        logger.info('Se detectó la intención de marcar como pendiente, aplicando actualización de estado');
+        logger.info('Detected intention to mark as pending, applying status update');
       } else {
-        // Intentar detectar estado por contexto
-        if (lowercaseText.includes('estado') || lowercaseText.includes('estatus')) {
-          if (lowercaseText.includes('a ')) {
-            const afterStatusMatch = transcription.match(/(?:estado|estatus)\s+a\s+(.+?)(?:\.|$)/i);
+        if (lowercaseText.includes('estado') || lowercaseText.includes('estatus') || lowercaseText.includes('status')) {
+          if (lowercaseText.includes(' a ') || lowercaseText.includes(' to ')) {
+            const afterStatusMatch = transcription.match(/(?:estado|estatus|status)\s+(?:a|to)\s+(.+?)(?:\.|$)/i);
             if (afterStatusMatch && afterStatusMatch[1]) {
               const statusText = afterStatusMatch[1].trim().toLowerCase();
               
-              if (statusText.includes('completa') || statusText.includes('terminad')) {
+              if (statusText.includes('completa') || statusText.includes('complete') || statusText.includes('terminad') || statusText.includes('done')) {
                 updateDetails.updates = { status: 'completed' };
-              } else if (statusText.includes('progreso')) {
+              } else if (statusText.includes('progreso') || statusText.includes('progress')) {
                 updateDetails.updates = { status: 'in_progress' };
-              } else if (statusText.includes('cancela') || statusText.includes('suspendid')) {
+              } else if (statusText.includes('cancela') || statusText.includes('cancel') || statusText.includes('suspendid') || statusText.includes('suspend')) {
                 updateDetails.updates = { status: 'cancelled' };
-              } else if (statusText.includes('pendiente')) {
+              } else if (statusText.includes('pendiente') || statusText.includes('pending')) {
                 updateDetails.updates = { status: 'pending' };
               }
             }
@@ -1587,48 +1417,63 @@ async function processUpdateTaskCommand(transcription, projects = []) {
         }
       }
       
-      // Si aún no hay actualizaciones, informar al usuario
       if (!updateDetails.updates || Object.keys(updateDetails.updates).length === 0) {
-        logger.error('No se especificaron actualizaciones en el comando');
+        logger.error('No updates specified in command');
         return {
           success: false,
-          response: `No pude identificar qué cambios quieres hacer a la tarea "${task.title}". Por favor, especifica qué quieres actualizar (título, descripción, estado, fecha).`
+          response: language === 'en'
+            ? `I couldn't identify what changes you want to make to the task "${task.title}". Please specify what you want to update (title, description, status, date).`
+            : `No pude identificar qué cambios quieres hacer a la tarea "${task.title}". Por favor, especifica qué quieres actualizar (título, descripción, estado, fecha).`
         };
       }
     }
     
-    logger.info(`Actualizando tarea ${task.id} con: ${JSON.stringify(updateDetails.updates)}`);
+    logger.info(`Updating task ${task.id} with: ${JSON.stringify(updateDetails.updates)}`);
     
-    // Guardar estado anterior para el mensaje
     const oldStatus = task.status;
     
-    // Aplicar las actualizaciones
     await task.update(updateDetails.updates);
     
-    // Generar mensaje de respuesta claro
-    let responseMessage = `He actualizado la tarea "${task.title}"`;
+    let responseMessage = language === 'en'
+      ? `I've updated the task "${task.title}"`
+      : `He actualizado la tarea "${task.title}"`;
     
     if (updateDetails.updates.title) {
-      responseMessage += `, cambiando su título a "${updateDetails.updates.title}"`;
+      responseMessage += language === 'en'
+        ? `, changing its title to "${updateDetails.updates.title}"`
+        : `, cambiando su título a "${updateDetails.updates.title}"`;
     }
     
     if (updateDetails.updates.status && oldStatus !== updateDetails.updates.status) {
-      const statusText = {
-        'pending': 'pendiente',
-        'in_progress': 'en progreso',
-        'completed': 'completada',
-        'cancelled': 'cancelada'
-      }[updateDetails.updates.status] || updateDetails.updates.status;
+      const statusText = language === 'en'
+        ? {
+            'pending': 'pending',
+            'in_progress': 'in progress',
+            'completed': 'completed',
+            'cancelled': 'cancelled'
+          }[updateDetails.updates.status] || updateDetails.updates.status
+        : {
+            'pending': 'pendiente',
+            'in_progress': 'en progreso',
+            'completed': 'completada',
+            'cancelled': 'cancelada'
+          }[updateDetails.updates.status] || updateDetails.updates.status;
       
-      responseMessage += `, marcándola como ${statusText}`;
+      responseMessage += language === 'en'
+        ? `, marking it as ${statusText}`
+        : `, marcándola como ${statusText}`;
     }
     
     if (updateDetails.updates.description) {
-      responseMessage += `, actualizando su descripción`;
+      responseMessage += language === 'en'
+        ? `, updating its description`
+        : `, actualizando su descripción`;
     }
     
     if (updateDetails.updates.completion_date) {
-      responseMessage += `, estableciendo su fecha límite para el ${updateDetails.updates.completion_date}`;
+      responseMessage += language === 'en'
+        ? `, setting its deadline for ${updateDetails.updates.completion_date}`
+        : `, estableciendo su fecha límite para el ${updateDetails.updates.completion_date}`;
     }
     
     responseMessage += `.`;
@@ -1642,522 +1487,408 @@ async function processUpdateTaskCommand(transcription, projects = []) {
         description: task.description,
         status: task.status,
         completion_date: task.completion_date,
-        projectName: task.Project ? task.Project.title : 'Desconocido'
+        projectName: task.Project ? task.Project.title : (language === 'en' ? 'Unknown' : 'Desconocido')
       },
       response: responseMessage
     };
   } catch (error) {
-    logger.error(`Error al actualizar tarea: ${error.message}`);
+    logger.error(`Error updating task: ${error.message}`);
     return {
       success: false,
-      response: `Lo siento, no pude actualizar la tarea debido a un error: ${error.message}.`
+      response: language === 'en'
+        ? `Sorry, I couldn't update the task due to an error: ${error.message}.`
+        : `Lo siento, no pude actualizar la tarea debido a un error: ${error.message}.`
     };
   }
 }
 
-// Procesador para actualizar proyectos - MEJORADO
-async function processUpdateProjectCommand(transcription) {
-    logger.info(`Processing update project command: "${transcription}"`);
+// ==================== EXTRAER DETALLES DE ACTUALIZACIÓN ====================
+async function extractUpdateDetails(transcription, language) {
+  if (!openaiClient) {
+    return fallbackExtractUpdateDetails(transcription, language);
+  }
+  
+  try {
+    const systemPrompt = language === 'en'
+      ? `You are a specialist in updating tasks. Extract update details from voice commands.
+Your goal is to identify which task to update and which fields to modify.
+Do not invent information that is not clearly implicit in the text.`
+      : `Eres un especialista en actualización de tareas. Extrae detalles de actualización de comandos de voz.
+Tu objetivo es identificar qué tarea se quiere actualizar y qué campos se quieren modificar.
+No inventes información que no esté claramente implícita en el texto.`;
     
-    try {
-      // Extraer detalles de la actualización
-      let projectIdentifier = null;
-      let updates = {};
-      
-      // Normalizar el texto para mejor procesamiento
-      const lowercaseText = transcription.toLowerCase();
-      
-      // MEJORA 1: Extraer el nombre del proyecto con patrones más precisos
-      // Intentar extraer el nombre del proyecto evitando incluir la parte "a [nuevo_valor]"
-      const projectPatterns = [
-        /(?:proyecto|plan)\s+["']?([^"'.,]+?)(?:\s+a\s+|\s+como\s+|\s+con\s+|\s+para\s+|$)/i,
-        /(?:actualizar|cambiar|modificar|editar)\s+(?:el\s+)?(?:proyecto\s+)?["']?([^"'.,]+?)(?:\s+a\s+|\s+como\s+|\s+con\s+|\s+para\s+|$)/i,
-        /(?:título|titulo|nombre|prioridad)\s+(?:del\s+)?(?:proyecto\s+)?["']?([^"'.,]+?)(?:\s+a\s+|\s+como\s+|\s+con\s+|\s+para\s+|$)/i
+    const userPrompt = language === 'en'
+      ? `Extract the following details from this voice command: "${transcription}"
+
+Return ONLY a JSON object with these fields:
+- taskIdentifier: words that identify which task to update (name or ID)
+- updates: an object with the fields to update, which can include:
+  - title: new title
+  - description: new description
+  - status: new status ("in_progress", "completed", "pending", "cancelled")
+  - completion_date: new deadline in YYYY-MM-DD format
+
+Only include fields in 'updates' that will actually be changed according to the command.
+If "in progress" is mentioned, use "in_progress" for status.
+If "complete", "completed" or "done" is mentioned, use "completed" for status.
+If "pending" is mentioned, use "pending" for status.
+If "cancel", "cancelled" or "canceled" is mentioned, use "cancelled" for status.`
+      : `Extrae los siguientes detalles de este comando de voz: "${transcription}"
+
+Devuelve SOLO un objeto JSON con estos campos:
+- taskIdentifier: palabras que identifican qué tarea actualizar (nombre o ID)
+- updates: un objeto con los campos a actualizar, que pueden incluir:
+  - title: nuevo título
+  - description: nueva descripción
+  - status: nuevo estado ("in_progress", "completed", "pending", "cancelled")
+  - completion_date: nueva fecha límite en formato YYYY-MM-DD
+
+Solo incluye campos en 'updates' que realmente se vayan a cambiar según el comando.
+Si "en progreso" se menciona, usa "in_progress" para status.
+Si "completar", "completada" o "completado" se menciona, usa "completed" para status.
+Si "pendiente" se menciona, usa "pending" para status.
+Si "cancelar", "cancelada" o "cancelado" se menciona, usa "cancelled" para status.`;
+    
+    const completion = await openaiClient.chat.completions.create({
+      model: "claude-sonnet-4-20250514",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ],
+      temperature: 0.1,
+      max_tokens: 300,
+    });
+    
+    const responseContent = completion.choices[0].message.content;
+    const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
+    
+    if (jsonMatch) {
+      const extractedData = JSON.parse(jsonMatch[0]);
+      logger.info(`Update details extracted by Claude: ${JSON.stringify(extractedData)}`);
+      return extractedData;
+    } else {
+      throw new Error('Could not extract JSON from response');
+    }
+  } catch (error) {
+    logger.error(`Error extracting update details with Claude: ${error.message}`);
+    return fallbackExtractUpdateDetails(transcription, language);
+  }
+}
+
+// ==================== FALLBACK: EXTRAER DETALLES DE ACTUALIZACIÓN ====================
+function fallbackExtractUpdateDetails(transcription, language) {
+  const lowercaseText = transcription.toLowerCase();
+  
+  let taskIdentifier = null;
+  
+  const patterns = language === 'en'
+    ? [
+        /(?:update|modify|change|edit|mark)\s+(?:the\s+)?(?:task|activity)\s+(?:called |titled |named |number |id )?["']?([^"'.,]+)["']?/i,
+        /(?:task|activity)\s+(?:called |titled |named |number |id )?["']?([^"'.,]+)["']?/i,
+      ]
+    : [
+        /(?:actualizar|modificar|cambiar|editar|cambia|marca|marcar)\s+(?:la\s+)?(?:tarea|actividad)\s+(?:llamada |titulada |con nombre |con título |número |id )?["']?([^"'.,]+)["']?/i,
+        /(?:tarea|actividad)\s+(?:llamada |titulada |con nombre |con título |número |id )?["']?([^"'.,]+)["']?/i,
       ];
+  
+  for (const pattern of patterns) {
+    const match = transcription.match(pattern);
+    if (match && match[1]) {
+      taskIdentifier = match[1].trim();
+      break;
+    }
+  }
+  
+  const updates = {};
+  
+  if (language === 'en') {
+    if (lowercaseText.includes('pending')) updates.status = 'pending';
+    else if (lowercaseText.includes('in progress')) updates.status = 'in_progress';
+    else if (lowercaseText.includes('completed') || lowercaseText.includes('done')) updates.status = 'completed';
+    else if (lowercaseText.includes('cancelled') || lowercaseText.includes('canceled')) updates.status = 'cancelled';
+  } else {
+    if (lowercaseText.includes('pendiente')) updates.status = 'pending';
+    else if (lowercaseText.includes('en progreso')) updates.status = 'in_progress';
+    else if (lowercaseText.includes('completada') || lowercaseText.includes('completar') || lowercaseText.includes('terminada')) updates.status = 'completed';
+    else if (lowercaseText.includes('cancelada') || lowercaseText.includes('cancelar')) updates.status = 'cancelled';
+  }
+  
+  return {
+    taskIdentifier,
+    updates
+  };
+}
+
+// ==================== ACTUALIZAR PROYECTO ====================
+async function processUpdateProjectCommand(transcription, language) {
+  logger.info(`Processing update project command in ${language}`);
+  
+  try {
+    let projectIdentifier = null;
+    let updates = {};
+    
+    const lowercaseText = transcription.toLowerCase();
+    
+    const projectPatterns = language === 'en'
+      ? [
+          /(?:project|plan)\s+["']?([^"'.,]+?)(?:\s+to\s+|\s+as\s+|\s+with\s+|\s+for\s+|$)/i,
+          /(?:update|change|modify|edit)\s+(?:the\s+)?(?:project\s+)?["']?([^"'.,]+?)(?:\s+to\s+|\s+as\s+|\s+with\s+|\s+for\s+|$)/i,
+        ]
+      : [
+          /(?:proyecto|plan)\s+["']?([^"'.,]+?)(?:\s+a\s+|\s+como\s+|\s+con\s+|\s+para\s+|$)/i,
+          /(?:actualizar|cambiar|modificar|editar)\s+(?:el\s+)?(?:proyecto\s+)?["']?([^"'.,]+?)(?:\s+a\s+|\s+como\s+|\s+con\s+|\s+para\s+|$)/i,
+        ];
+    
+    for (const pattern of projectPatterns) {
+      const match = transcription.match(pattern);
+      if (match && match[1]) {
+        projectIdentifier = match[1].trim();
+        logger.info(`Project identifier extracted: ${projectIdentifier}`);
+        break;
+      }
+    }
+    
+    if (!projectIdentifier) {
+      logger.error('No project identifier found in command');
+      return {
+        success: false,
+        response: language === 'en'
+          ? 'I couldn\'t identify which project you want to update. Please mention the name or ID of the project you want to modify.'
+          : 'No pude identificar qué proyecto deseas actualizar. Por favor, menciona el nombre o ID del proyecto que quieres modificar.'
+      };
+    }
+    
+    if (lowercaseText.includes('prioridad') || lowercaseText.includes('priority')) {
+      if (lowercaseText.includes('alta') || lowercaseText.includes('high') || lowercaseText.includes('urgent')) {
+        updates.priority = 'high';
+      } else if (lowercaseText.includes('baja') || lowercaseText.includes('low')) {
+        updates.priority = 'low';
+      } else if (lowercaseText.includes('media') || lowercaseText.includes('medium') || 
+                lowercaseText.includes('medio') || lowercaseText.includes('normal')) {
+        updates.priority = 'medium';
+      }
+    }
+    
+    if (lowercaseText.includes('título') || lowercaseText.includes('titulo') || 
+        lowercaseText.includes('title') || lowercaseText.includes('nombre') || 
+        lowercaseText.includes('name')) {
+      const titlePatterns = language === 'en'
+        ? [
+            /(?:title|name)\s+(?:to|as)\s+["']?([^"'.,]+)["']?/i,
+            /(?:change|update)\s+(?:to|as)\s+["']?([^"'.,]+)["']?/i,
+          ]
+        : [
+            /(?:título|titulo|nombre)\s+(?:a|por|como)\s+["']?([^"'.,]+)["']?/i,
+            /(?:cambiar|actualizar)\s+(?:a|por|como)\s+["']?([^"'.,]+)["']?/i,
+          ];
       
-      for (const pattern of projectPatterns) {
+      for (const pattern of titlePatterns) {
         const match = transcription.match(pattern);
         if (match && match[1]) {
-          projectIdentifier = match[1].trim();
-          logger.info(`Identificador de proyecto extraído: ${projectIdentifier}`);
+          updates.title = match[1].trim();
+          logger.info(`Title extracted: ${updates.title}`);
           break;
         }
       }
       
-      // Búsqueda de respaldo después de "del proyecto"
-      if (!projectIdentifier) {
-        const afterDelMatch = transcription.match(/del\s+proyecto\s+["']?([^"'.,]+?)(?:\s+a\s+|\s+como\s+|\s+con\s+|\s+para\s+|$)/i);
-        if (afterDelMatch && afterDelMatch[1]) {
-          projectIdentifier = afterDelMatch[1].trim();
-          logger.info(`Identificador de proyecto extraído después de "del proyecto": ${projectIdentifier}`);
-        }
-      }
-      
-      if (!projectIdentifier) {
-        logger.error('No se encontró identificador de proyecto en el comando');
-        return {
-          success: false,
-          response: 'No pude identificar qué proyecto deseas actualizar. Por favor, menciona el nombre o ID del proyecto que quieres modificar.'
-        };
-      }
-      
-      // MEJORA 2: Detectar las actualizaciones a realizar con patrones más flexibles
-      
-      // Detectar cambio de prioridad
-      if (lowercaseText.includes('prioridad') || lowercaseText.includes('probabilidad')) {
-        if (lowercaseText.includes('alta') || lowercaseText.includes('urgente')) {
-          updates.priority = 'high';
-        } else if (lowercaseText.includes('baja')) {
-          updates.priority = 'low';
-        } else if (lowercaseText.includes('media') || lowercaseText.includes('medio') || 
-                  lowercaseText.includes('normal')) {
-          updates.priority = 'medium';
-        }
-      }
-      
-      // MEJORA 3: Detectar cambio de título con patrones más flexibles
-      if (lowercaseText.includes('título') || lowercaseText.includes('titulo') || 
-          lowercaseText.includes('nombre')) {
-        // Buscar después de "a", "por", "como"
-        const titlePatterns = [
-          /(?:título|titulo|nombre)\s+(?:a|por|como)\s+["']?([^"'.,]+)["']?/i,
-          /(?:a|por|como)\s+(?:título|titulo|nombre)\s+["']?([^"'.,]+)["']?/i,
-          /(?:cambiar|actualizar)\s+(?:a|por|como)\s+["']?([^"'.,]+)["']?/i
-        ];
-        
-        for (const pattern of titlePatterns) {
-          const match = transcription.match(pattern);
-          if (match && match[1]) {
-            updates.title = match[1].trim();
-            logger.info(`Título extraído: ${updates.title}`);
-            break;
-          }
-        }
-        
-        // Si no se encontró por patrones específicos, buscar después de la preposición "a"
-        if (!updates.title && lowercaseText.includes(' a ')) {
-          const afterAMatch = transcription.match(/\sa\s+["']?([^"'.,]+)["']?/i);
-          if (afterAMatch && afterAMatch[1] && 
-              !afterAMatch[1].startsWith('prioridad') && 
-              !afterAMatch[1].includes('fecha')) {
-            updates.title = afterAMatch[1].trim();
-            logger.info(`Título extraído después de "a": ${updates.title}`);
-          }
-        }
-      }
-      
-      // Detectar cambio de descripción
-      if (lowercaseText.includes('descripción') || lowercaseText.includes('descripcion')) {
-        const descMatch = transcription.match(/(?:descripción|descripcion)\s+(?:a|por|como)\s+["']?([^"'.,]+)["']?/i);
-        if (descMatch && descMatch[1]) {
-          updates.description = descMatch[1].trim();
-        }
-      }
-      
-      // Detectar cambio de fecha de culminación
-      if (lowercaseText.includes('fecha') || lowercaseText.includes('culminación') || 
-          lowercaseText.includes('culminacion') || lowercaseText.includes('vencimiento') || 
-          lowercaseText.includes('finalización')) {
-        const currentYear = new Date().getFullYear();
-        
-        // Buscar fechas en formato DD/MM o DD/MM/YYYY
-        const dateMatch = transcription.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
-        if (dateMatch) {
-          const day = parseInt(dateMatch[1]);
-          const month = parseInt(dateMatch[2]) - 1; // Meses en JS son 0-11
-          let year = dateMatch[3] ? parseInt(dateMatch[3]) : currentYear;
-          
-          // Ajustar año si se proporcionó en formato corto
-          if (year < 100) {
-            year += year < 50 ? 2000 : 1900;
-          }
-          
-          const date = new Date(year, month, day);
-          updates.culmination_date = date.toISOString().split('T')[0];
-        } else if (lowercaseText.includes('fin de año') || lowercaseText.includes('final de año')) {
-          updates.culmination_date = `${currentYear}-12-31`;
-        } else if (lowercaseText.includes('próximo mes') || lowercaseText.includes('proximo mes')) {
-          const nextMonth = new Date();
-          nextMonth.setMonth(nextMonth.getMonth() + 1);
-          updates.culmination_date = nextMonth.toISOString().split('T')[0];
-        } else if (lowercaseText.includes('diciembre')) {
-          updates.culmination_date = `${currentYear}-12-31`;
-        } else if (lowercaseText.includes('enero')) {
-          updates.culmination_date = `${currentYear + 1}-01-31`;
-        }
-      }
-      
-      // MEJORA 4: Si no hay actualizaciones pero el comando sugiere cambiar título,
-      // asumir que la parte después de "a" es el nuevo título
-      if (Object.keys(updates).length === 0 && 
-          (lowercaseText.includes('cambiar') || 
-           lowercaseText.includes('actualizar') || 
-           lowercaseText.includes('modificar'))) {
-        
-        if (lowercaseText.includes(' a ')) {
-          const afterAMatch = transcription.match(/\sa\s+["']?([^"'.,]+)["']?/i);
-          if (afterAMatch && afterAMatch[1]) {
-            updates.title = afterAMatch[1].trim();
-            logger.info(`Título inferido después de "a": ${updates.title}`);
-          }
-        }
-      }
-      
-      // Verificar si hay actualizaciones para aplicar
-      if (Object.keys(updates).length === 0) {
-        logger.error('No se especificaron actualizaciones en el comando');
-        return {
-          success: false,
-          response: `No pude identificar qué cambios quieres hacer al proyecto "${projectIdentifier}". Por favor, especifica qué quieres actualizar (título, descripción, prioridad, fecha).`
-        };
-      }
-      
-      // Buscar el proyecto a actualizar
-      let project;
-      
-      if (!isNaN(projectIdentifier)) {
-        // Si el identificador es un número, buscar por ID
-        project = await Project.findByPk(parseInt(projectIdentifier));
-      } else {
-        // Si no, buscar por título (coincidencia parcial)
-        project = await Project.findOne({
-          where: {
-            title: {
-              [Op.iLike]: `%${projectIdentifier}%`
-            }
-          }
-        });
-        
-        // Si no se encontró, intentar buscar con palabras clave
-        if (!project) {
-          const keywords = projectIdentifier.split(' ');
-          if (keywords.length > 0) {
-            const mainKeyword = keywords[0];
-            
-            const possibleProjects = await Project.findAll({
-              where: {
-                title: {
-                  [Op.iLike]: `%${mainKeyword}%`
-                }
-              },
-              limit: 5
-            });
-            
-            if (possibleProjects.length > 0) {
-              // Elegir el primer proyecto
-              project = possibleProjects[0];
-            }
-          }
-        }
-      }
-      
-      if (!project) {
-        logger.error(`No se encontró ningún proyecto que coincida con: ${projectIdentifier}`);
-        return {
-          success: false,
-          response: `No encontré ningún proyecto que coincida con "${projectIdentifier}". Por favor, verifica el nombre o ID del proyecto e intenta de nuevo.`
-        };
-      }
-      
-      logger.info(`Actualizando proyecto ${project.id} con: ${JSON.stringify(updates)}`);
-      
-      // Guardar valores anteriores para el mensaje
-      const oldPriority = project.priority;
-      
-      // Aplicar las actualizaciones
-      await project.update(updates);
-      
-      // Generar mensaje de respuesta claro
-      let responseMessage = `He actualizado el proyecto "${project.title}"`;
-      
-      if (updates.title) {
-        responseMessage += `, cambiando su título a "${updates.title}"`;
-      }
-      
-      if (updates.priority && oldPriority !== updates.priority) {
-        const priorityText = {
-          'high': 'alta',
-          'medium': 'media',
-          'low': 'baja'
-        }[updates.priority] || updates.priority;
-        
-        responseMessage += `, estableciendo su prioridad a ${priorityText}`;
-      }
-      
-      if (updates.description) {
-        responseMessage += `, actualizando su descripción`;
-      }
-      
-      if (updates.culmination_date) {
-        responseMessage += `, estableciendo su fecha de finalización para el ${updates.culmination_date}`;
-      }
-      
-      responseMessage += `.`;
-      
-      return {
-        success: true,
-        action: 'updateProject',
-        projectDetails: project.dataValues,
-        response: responseMessage
-      };
-    } catch (error) {
-      logger.error(`Error al actualizar proyecto: ${error.message}`);
-      return {
-        success: false,
-        response: `Lo siento, no pude actualizar el proyecto debido a un error: ${error.message}.`
-      };
-    }
-  }
-
-// Extraer detalles de actualización del texto - MEJORADO
-async function extractUpdateDetails(transcription) {
-  try {
-    if (openaiClient) {
-      try {
-        // Usar OpenAI/Claude para extraer detalles con prompt mejorado
-        const completion = await openaiClient.chat.completions.create({
-          model: "claude-3-haiku-20240307",
-          messages: [
-            { 
-              role: "system", 
-              content: `Eres un especialista en actualización de tareas. Extrae detalles de actualización de comandos de voz.
-              Tu objetivo es identificar qué tarea se quiere actualizar y qué campos se quieren modificar.
-              No inventes información que no esté claramente implícita en el texto.` 
-            },
-            { 
-              role: "user", 
-              content: `Extrae los siguientes detalles de este comando de voz: "${transcription}"
-              
-              Devuelve SOLO un objeto JSON con estos campos:
-              - taskIdentifier: palabras que identifican qué tarea actualizar (nombre o ID)
-              - updates: un objeto con los campos a actualizar, que pueden incluir:
-                - title: nuevo título 
-                - description: nueva descripción
-                - status: nuevo estado ("in_progress", "completed", "pending", "cancelled")
-                - completion_date: nueva fecha límite en formato YYYY-MM-DD
-              
-              Solo incluye campos en 'updates' que realmente se vayan a cambiar según el comando.
-              Si "en progreso" se menciona, usa "in_progress" para status.
-              Si "completar", "completada" o "completado" se menciona, usa "completed" para status.
-              Si "pendiente" se menciona, usa "pending" para status.
-              Si "cancelar", "cancelada" o "cancelado" se menciona, usa "cancelled" para status.`
-            }
-          ],
-          temperature: 0.1, // Reducido para mayor precisión
-          max_tokens: 300,
-        });
-    
-        // Extraer y analizar la respuesta
-        const responseContent = completion.choices[0].message.content;
-        
-        // Intentar extraer el JSON de la respuesta
-        const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const extractedData = JSON.parse(jsonMatch[0]);
-          logger.info(`Detalles de actualización extraídos por Claude: ${JSON.stringify(extractedData)}`);
-          return extractedData;
-        } else {
-          throw new Error('No se pudo extraer JSON de la respuesta');
-        }
-      } catch (apiError) {
-        logger.error(`Error al extraer detalles de actualización con Claude: ${apiError.message}`);
-        // Continuar con la extracción basada en palabras clave
-      }
-    }
-    
-    // Extracción basada en palabras clave (fallback mejorado)
-    const lowercaseText = transcription.toLowerCase();
-    
-    // Extraer identificador de tarea
-    let taskIdentifier = null;
-    
-    // Patrones comunes para identificar tarea
-    const patterns = [
-      /(?:actualizar|modificar|cambiar|editar|cambia|marca|marcar)\s+(?:la\s+)?(?:tarea|actividad)\s+(?:llamada |titulada |con nombre |con título |número |id )?["']?([^"'.,]+)["']?/i,
-      /(?:tarea|actividad)\s+(?:llamada |titulada |con nombre |con título |número |id )?["']?([^"'.,]+)["']?/i,
-      /(?:marcar|completar|finalizar|cambiar|cambia)\s+(?:la\s+)?(?:tarea|actividad)\s+(?:llamada |titulada |con nombre |con título |número |id )?["']?([^"'.,]+)["']?/i,
-      /(?:estado|estatus)\s+(?:de\s+)(?:la\s+)?(?:tarea|actividad)\s+["']?([^"'.,]+)["']?/i
-    ];
-    
-    for (const pattern of patterns) {
-      const match = transcription.match(pattern);
-      if (match && match[1]) {
-        taskIdentifier = match[1].trim();
-        break;
-      }
-    }
-    
-    // Si no se encontró identificador por patrones, buscar después de palabras clave
-    if (!taskIdentifier) {
-      const keywords = ['tarea', 'actividad', 'id'];
-      
-      for (const keyword of keywords) {
-        if (lowercaseText.includes(keyword)) {
-          const afterKeywordMatch = transcription.match(new RegExp(`${keyword}\\s+([^\\s.,]+)`, 'i'));
-          if (afterKeywordMatch) {
-            taskIdentifier = afterKeywordMatch[1].trim();
-            break;
-          }
+      if (!updates.title && (lowercaseText.includes(' a ') || lowercaseText.includes(' to '))) {
+        const afterAMatch = transcription.match(/\s(?:a|to)\s+["']?([^"'.,]+)["']?/i);
+        if (afterAMatch && afterAMatch[1] && 
+            !afterAMatch[1].toLowerCase().startsWith('prioridad') && 
+            !afterAMatch[1].toLowerCase().startsWith('priority') &&
+            !afterAMatch[1].toLowerCase().includes('fecha') &&
+            !afterAMatch[1].toLowerCase().includes('date')) {
+          updates.title = afterAMatch[1].trim();
+          logger.info(`Title extracted after "a/to": ${updates.title}`);
         }
       }
     }
     
-    // Extraer actualizaciones
-    const updates = {};
-    
-    // Actualizar estado basado en palabras clave
-    if (lowercaseText.includes('pendiente')) {
-      updates.status = 'pending';
-    } else if (lowercaseText.includes('en progreso')) {
-      updates.status = 'in_progress';
-    } else if (lowercaseText.includes('completada') || 
-              lowercaseText.includes('completar') ||
-              lowercaseText.includes('completado') ||
-              lowercaseText.includes('terminar') ||
-              lowercaseText.includes('terminada') ||
-              lowercaseText.includes('finalizar') ||
-              lowercaseText.includes('finalizada')) {
-      updates.status = 'completed';
-    } else if (lowercaseText.includes('cancelada') ||
-              lowercaseText.includes('cancelar') ||
-              lowercaseText.includes('cancelado')) {
-      updates.status = 'cancelled';
-    }
-    
-    // Actualizar título
-    const titlePatterns = [
-      /(?:cambiar|actualizar|cambia) (?:el )?título (?:a|por) ["']?([^"'.,]+)["']?/i,
-      /(?:nuevo|cambiar) (?:el )?título:? ["']?([^"'.,]+)["']?/i,
-      /título (?:nuevo|a|por):? ["']?([^"'.,]+)["']?/i
-    ];
-    
-    for (const pattern of titlePatterns) {
-      const match = transcription.match(pattern);
-      if (match && match[1]) {
-        updates.title = match[1].trim();
-        break;
-      }
-    }
-    
-    // Actualizar descripción
-    const descriptionPatterns = [
-      /(?:cambiar|actualizar|cambia) (?:la )?descripción (?:a|por) ["']?([^"'.,]+)["']?/i,
-      /(?:nueva|cambiar) (?:la )?descripción:? ["']?([^"'.,]+)["']?/i,
-      /descripción (?:nueva|a|por):? ["']?([^"'.,]+)["']?/i
-    ];
-    
-    for (const pattern of descriptionPatterns) {
-      const match = transcription.match(pattern);
-      if (match && match[1]) {
-        updates.description = match[1].trim();
-        break;
-      }
-    }
-    
-    // Actualizar fecha
-    if (lowercaseText.includes('fecha')) {
-      let newDate = new Date();
+    if (lowercaseText.includes('descripción') || lowercaseText.includes('descripcion') || lowercaseText.includes('description')) {
+      const descPattern = language === 'en'
+        ? /(?:description)\s+(?:to|as)\s+["']?([^"'.,]+)["']?/i
+        : /(?:descripción|descripcion)\s+(?:a|por|como)\s+["']?([^"'.,]+)["']?/i;
       
-      if (lowercaseText.includes('mañana')) {
-        newDate.setDate(newDate.getDate() + 1);
-        updates.completion_date = newDate.toISOString().split('T')[0];
-      } else if (lowercaseText.includes('próxima semana') || lowercaseText.includes('proxima semana')) {
-        newDate.setDate(newDate.getDate() + 7);
-        updates.completion_date = newDate.toISOString().split('T')[0];
-      } else if (lowercaseText.includes('próximo mes') || lowercaseText.includes('proximo mes')) {
-        newDate.setMonth(newDate.getMonth() + 1);
-        updates.completion_date = newDate.toISOString().split('T')[0];
+      const descMatch = transcription.match(descPattern);
+      if (descMatch && descMatch[1]) {
+        updates.description = descMatch[1].trim();
       }
+    }
+    
+    if (lowercaseText.includes('fecha') || lowercaseText.includes('date') ||
+        lowercaseText.includes('culminación') || lowercaseText.includes('culminacion') || 
+        lowercaseText.includes('deadline') || lowercaseText.includes('vencimiento') || 
+        lowercaseText.includes('finalización') || lowercaseText.includes('completion')) {
+      const currentYear = new Date().getFullYear();
       
-      // Buscar también fecha explícita en formato español (DD/MM/YYYY)
       const dateMatch = transcription.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
       if (dateMatch) {
         const day = parseInt(dateMatch[1]);
-        const month = parseInt(dateMatch[2]) - 1; // Meses en JS son 0-11
-        let year = dateMatch[3] ? parseInt(dateMatch[3]) : new Date().getFullYear();
+        const month = parseInt(dateMatch[2]) - 1;
+        let year = dateMatch[3] ? parseInt(dateMatch[3]) : currentYear;
         
-        // Ajustar año si se proporcionó en formato corto
         if (year < 100) {
-          year += 2000;
+          year += year < 50 ? 2000 : 1900;
         }
         
         const date = new Date(year, month, day);
-        updates.completion_date = date.toISOString().split('T')[0];
+        updates.culmination_date = formatDate(date);
+      } else if (lowercaseText.includes('fin de año') || lowercaseText.includes('final de año') || lowercaseText.includes('end of year')) {
+        updates.culmination_date = `${currentYear}-12-31`;
+      } else if (lowercaseText.includes('próximo mes') || lowercaseText.includes('proximo mes') || lowercaseText.includes('next month')) {
+        const nextMonth = new Date();
+        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        updates.culmination_date = formatDate(nextMonth);
       }
     }
     
+    if (Object.keys(updates).length === 0 && 
+        (lowercaseText.includes('cambiar') || lowercaseText.includes('change') ||
+         lowercaseText.includes('actualizar') || lowercaseText.includes('update') ||
+         lowercaseText.includes('modificar') || lowercaseText.includes('modify'))) {
+      
+      if (lowercaseText.includes(' a ') || lowercaseText.includes(' to ')) {
+        const afterAMatch = transcription.match(/\s(?:a|to)\s+["']?([^"'.,]+)["']?/i);
+        if (afterAMatch && afterAMatch[1]) {
+          updates.title = afterAMatch[1].trim();
+          logger.info(`Title inferred after "a/to": ${updates.title}`);
+        }
+      }
+    }
+    
+    if (Object.keys(updates).length === 0) {
+      logger.error('No updates specified in command');
+      return {
+        success: false,
+        response: language === 'en'
+          ? `I couldn't identify what changes you want to make to the project "${projectIdentifier}". Please specify what you want to update (title, description, priority, date).`
+          : `No pude identificar qué cambios quieres hacer al proyecto "${projectIdentifier}". Por favor, especifica qué quieres actualizar (título, descripción, prioridad, fecha).`
+      };
+    }
+    
+    let project;
+    
+    if (!isNaN(projectIdentifier)) {
+      project = await Project.findByPk(parseInt(projectIdentifier));
+    } else {
+      project = await Project.findOne({
+        where: {
+          title: {
+            [Op.iLike]: `%${projectIdentifier}%`
+          }
+        }
+      });
+      
+      if (!project) {
+        const keywords = projectIdentifier.split(' ');
+        if (keywords.length > 0) {
+          const mainKeyword = keywords[0];
+          
+          const possibleProjects = await Project.findAll({
+            where: {
+              title: {
+                [Op.iLike]: `%${mainKeyword}%`
+              }
+            },
+            limit: 5
+          });
+          
+          if (possibleProjects.length > 0) {
+            project = possibleProjects[0];
+          }
+        }
+      }
+    }
+    
+    if (!project) {
+      logger.error(`No project found matching: ${projectIdentifier}`);
+      return {
+        success: false,
+        response: language === 'en'
+          ? `I didn't find any project matching "${projectIdentifier}". Please verify the project name or ID and try again.`
+          : `No encontré ningún proyecto que coincida con "${projectIdentifier}". Por favor, verifica el nombre o ID del proyecto e intenta de nuevo.`
+      };
+    }
+    
+    logger.info(`Updating project ${project.id} with: ${JSON.stringify(updates)}`);
+    
+    const oldPriority = project.priority;
+    
+    await project.update(updates);
+    
+    let responseMessage = language === 'en'
+      ? `I've updated the project "${project.title}"`
+      : `He actualizado el proyecto "${project.title}"`;
+    
+    if (updates.title) {
+      responseMessage += language === 'en'
+        ? `, changing its title to "${updates.title}"`
+        : `, cambiando su título a "${updates.title}"`;
+    }
+    
+    if (updates.priority && oldPriority !== updates.priority) {
+      const priorityText = language === 'en'
+        ? updates.priority
+        : {
+            'high': 'alta',
+            'medium': 'media',
+            'low': 'baja'
+          }[updates.priority] || updates.priority;
+      
+      responseMessage += language === 'en'
+        ? `, setting its priority to ${priorityText}`
+        : `, estableciendo su prioridad a ${priorityText}`;
+    }
+    
+    if (updates.description) {
+      responseMessage += language === 'en'
+        ? `, updating its description`
+        : `, actualizando su descripción`;
+    }
+    
+    if (updates.culmination_date) {
+      responseMessage += language === 'en'
+        ? `, setting its completion date for ${updates.culmination_date}`
+        : `, estableciendo su fecha de finalización para el ${updates.culmination_date}`;
+    }
+    
+    responseMessage += `.`;
+    
     return {
-      taskIdentifier,
-      updates
+      success: true,
+      action: 'updateProject',
+      projectDetails: project.dataValues,
+      response: responseMessage
     };
   } catch (error) {
-    logger.error(`Error al extraer detalles de actualización: ${error.message}`);
-    // Devolver valores por defecto
+    logger.error(`Error updating project: ${error.message}`);
     return {
-      taskIdentifier: null,
-      updates: {}
+      success: false,
+      response: language === 'en'
+        ? `Sorry, I couldn't update the project due to an error: ${error.message}.`
+        : `Lo siento, no pude actualizar el proyecto debido a un error: ${error.message}.`
     };
   }
 }
 
-// Procesador de comando para contar tareas - MEJORADO
-/**
- * Procesa un comando de voz para contar las tareas existentes en el sistema.
- * 
- * @async
- * @function processCountTasksCommand
- * @returns {Promise<Object>} Un objeto que contiene:
- * - `success` {boolean}: Indica si la operación fue exitosa.
- * - `action` {string}: La acción realizada, en este caso 'countTasks'.
- * - `counts` {Object}: Un objeto con el conteo total y por estado de las tareas:
- *    - `total` {number}: El número total de tareas en el sistema.
- *    - `pending` {number}: El número de tareas pendientes.
- *    - `inProgress` {number}: El número de tareas en progreso.
- *    - `completed` {number}: El número de tareas completadas.
- *    - `cancelled` {number}: El número de tareas canceladas.
- * - `tasksByProject` {Array<Object>}: Una lista de proyectos con estadísticas de sus tareas, incluyendo:
- *    - `projectId` {number}: El ID del proyecto.
- *    - `projectName` {string}: El nombre del proyecto.
- *    - `taskCount` {number}: El número total de tareas asociadas al proyecto.
- *    - `pendingCount` {number}: El número de tareas pendientes en el proyecto.
- *    - `inProgressCount` {number}: El número de tareas en progreso en el proyecto.
- *    - `completedCount` {number}: El número de tareas completadas en el proyecto.
- *    - `cancelledCount` {number}: El número de tareas canceladas en el proyecto.
- * - `response` {string}: Un mensaje de respuesta claro y amigable para el usuario.
- * 
- * @throws {Error} Si ocurre un error durante el conteo de tareas o la obtención de estadísticas.
- * 
- * @description
- * Esta función cuenta el número total de tareas en el sistema y genera estadísticas
- * sobre las tareas, incluyendo su distribución por estado y por proyecto. Si no hay tareas,
- * sugiere al usuario crear una nueva. Si hay tareas, genera un mensaje detallado con la cantidad
- * total de tareas, su distribución por estado y, si es relevante, su distribución por proyecto.
- * 
- * @example
- * const result = await processCountTasksCommand();
- * console.log(result.response);
- */
-async function processCountTasksCommand() {
-  logger.info('Processing count tasks command');
+// ==================== CONTAR TAREAS ====================
+async function processCountTasksCommand(language) {
+  logger.info(`Processing count tasks command in ${language}`);
   
   try {
-    // Contar todas las tareas
     const taskCount = await Task.count();
-    logger.info(`Total de tareas: ${taskCount}`);
+    logger.info(`Total tasks: ${taskCount}`);
     
-    // Contar tareas por estado
     const pendingTasks = await Task.count({ where: { status: 'pending' } });
     const inProgressTasks = await Task.count({ where: { status: 'in_progress' } });
     const completedTasks = await Task.count({ where: { status: 'completed' } });
     const cancelledTasks = await Task.count({ where: { status: 'cancelled' } });
     
-    // Verificar que la suma sea correcta
     const totalByStatus = pendingTasks + inProgressTasks + completedTasks + cancelledTasks;
     if (totalByStatus !== taskCount) {
-      logger.warn(`Discrepancia en conteo de tareas: total=${taskCount}, suma de estados=${totalByStatus}`);
+      logger.warn(`Discrepancy in task count: total=${taskCount}, sum of statuses=${totalByStatus}`);
     }
     
-    // Contar tareas por proyecto
     const projects = await Project.findAll({
       include: [
         {
@@ -2183,21 +1914,26 @@ async function processCountTasksCommand() {
     let responseMessage;
     
     if (taskCount === 0) {
-      responseMessage = 'No tienes ninguna tarea en el sistema. ¿Quieres crear una nueva tarea?';
+      responseMessage = language === 'en'
+        ? 'You have no tasks in the system. Do you want to create a new task?'
+        : 'No tienes ninguna tarea en el sistema. ¿Quieres crear una nueva tarea?';
     } else {
-      responseMessage = `Actualmente tienes ${taskCount} tarea${taskCount === 1 ? '' : 's'} en total en el sistema. `;
+      responseMessage = language === 'en'
+        ? `You currently have ${taskCount} task${taskCount === 1 ? '' : 's'} total in the system. `
+        : `Actualmente tienes ${taskCount} tarea${taskCount === 1 ? '' : 's'} en total en el sistema. `;
       
-      responseMessage += `De ellas, ${pendingTasks} ${pendingTasks === 1 ? 'está' : 'están'} pendiente${pendingTasks === 1 ? '' : 's'}, `;
-      responseMessage += `${inProgressTasks} en progreso y `;
-      responseMessage += `${completedTasks} completada${completedTasks === 1 ? '' : 's'}.`;
+      responseMessage += language === 'en'
+        ? `Of those, ${pendingTasks} ${pendingTasks === 1 ? 'is' : 'are'} pending, ${inProgressTasks} in progress and ${completedTasks} completed.`
+        : `De ellas, ${pendingTasks} ${pendingTasks === 1 ? 'está' : 'están'} pendiente${pendingTasks === 1 ? '' : 's'}, ${inProgressTasks} en progreso y ${completedTasks} completada${completedTasks === 1 ? '' : 's'}.`;
       
-      // Añadir información por proyecto si hay pocos proyectos con tareas
       const projectsWithTasks = tasksByProject.filter(p => p.taskCount > 0);
       if (projectsWithTasks.length > 0 && projectsWithTasks.length <= 3) {
-        responseMessage += ` Distribución por proyecto:`;
+        responseMessage += language === 'en'
+          ? ` Distribution by project:`
+          : ` Distribución por proyecto:`;
         
         for (const project of projectsWithTasks) {
-          responseMessage += `\n- "${project.projectName}": ${project.taskCount} tarea${project.taskCount === 1 ? '' : 's'}`;
+          responseMessage += `\n- "${project.projectName}": ${project.taskCount} ${language === 'en' ? 'task' : 'tarea'}${project.taskCount === 1 ? '' : (language === 'en' ? 's' : 's')}`;
         }
       }
     }
@@ -2216,51 +1952,24 @@ async function processCountTasksCommand() {
       response: responseMessage
     };
   } catch (error) {
-    logger.error(`Error al contar tareas: ${error.message}`);
+    logger.error(`Error counting tasks: ${error.message}`);
     return {
       success: false,
-      response: `Lo siento, no pude contar las tareas debido a un error: ${error.message}.`
+      response: language === 'en'
+        ? `Sorry, I couldn't count the tasks due to an error: ${error.message}.`
+        : `Lo siento, no pude contar las tareas debido a un error: ${error.message}.`
     };
   }
 }
 
-// Procesador de comando para contar proyectos - MEJORADO
-/**
- * Procesa un comando de voz para contar los proyectos existentes en el sistema.
- * 
- * @async
- * @function processCountProjectsCommand
- * @returns {Promise<Object>} Un objeto que contiene:
- * - `success` {boolean}: Indica si la operación fue exitosa.
- * - `action` {string}: La acción realizada, en este caso 'countProjects'.
- * - `count` {number}: El número total de proyectos en el sistema.
- * - `projects` {Array<Object>}: Una lista de proyectos con sus estadísticas, incluyendo:
- *    - `id` {number}: El ID del proyecto.
- *    - `title` {string}: El título del proyecto.
- *    - `taskCount` {number}: El número de tareas asociadas al proyecto.
- * - `response` {string}: Un mensaje de respuesta claro y amigable para el usuario.
- * 
- * @throws {Error} Si ocurre un error durante el conteo de proyectos o la obtención de estadísticas.
- * 
- * @description
- * Esta función cuenta el número total de proyectos en el sistema y genera estadísticas
- * sobre cada proyecto, incluyendo el número de tareas asociadas. Si no hay proyectos,
- * sugiere al usuario crear uno nuevo. Si hay proyectos, genera un mensaje detallado
- * con la cantidad de proyectos y sus respectivas estadísticas.
- * 
- * @example
- * const result = await processCountProjectsCommand();
- * console.log(result.response);
- */
-async function processCountProjectsCommand() {
-  logger.info('Processing count projects command');
+// ==================== CONTAR PROYECTOS ====================
+async function processCountProjectsCommand(language) {
+  logger.info(`Processing count projects command in ${language}`);
   
   try {
-    // Contar todos los proyectos
     const projectCount = await Project.count();
-    logger.info(`Total de proyectos: ${projectCount}`);
+    logger.info(`Total projects: ${projectCount}`);
     
-    // Contar tareas por proyecto
     const projects = await Project.findAll({
       include: [
         {
@@ -2270,7 +1979,6 @@ async function processCountProjectsCommand() {
       ]
     });
     
-    // Preparar estadísticas
     const projectStats = projects.map(project => ({
       id: project.id,
       title: project.title,
@@ -2280,15 +1988,20 @@ async function processCountProjectsCommand() {
     let responseMessage;
     
     if (projectCount === 0) {
-      responseMessage = 'No tienes ningún proyecto en el sistema. ¿Quieres crear un nuevo proyecto?';
+      responseMessage = language === 'en'
+        ? 'You have no projects in the system. Do you want to create a new project?'
+        : 'No tienes ningún proyecto en el sistema. ¿Quieres crear un nuevo proyecto?';
     } else {
-      responseMessage = `Actualmente tienes ${projectCount} proyecto${projectCount === 1 ? '' : 's'} en el sistema.`;
+      responseMessage = language === 'en'
+        ? `You currently have ${projectCount} project${projectCount === 1 ? '' : 's'} in the system.`
+        : `Actualmente tienes ${projectCount} proyecto${projectCount === 1 ? '' : 's'} en el sistema.`;
       
-      // Añadir información sobre proyectos
-      responseMessage += ' Los proyectos son:';
+      responseMessage += language === 'en'
+        ? ' The projects are:'
+        : ' Los proyectos son:';
       
       for (const project of projectStats) {
-        responseMessage += `\n- "${project.title}" con ${project.taskCount} tarea${project.taskCount === 1 ? '' : 's'}`;
+        responseMessage += `\n- "${project.title}" ${language === 'en' ? 'with' : 'con'} ${project.taskCount} ${language === 'en' ? 'task' : 'tarea'}${project.taskCount === 1 ? '' : (language === 'en' ? 's' : 's')}`;
       }
     }
     
@@ -2300,148 +2013,159 @@ async function processCountProjectsCommand() {
       response: responseMessage
     };
   } catch (error) {
-    logger.error(`Error al contar proyectos: ${error.message}`);
+    logger.error(`Error counting projects: ${error.message}`);
     return {
       success: false,
-      response: `Lo siento, no pude contar los proyectos debido a un error: ${error.message}.`
+      response: language === 'en'
+        ? `Sorry, I couldn't count the projects due to an error: ${error.message}.`
+        : `Lo siento, no pude contar los proyectos debido a un error: ${error.message}.`
     };
   }
 }
 
-// Procesador de comando de asistencia general - MEJORADO
-/**
- * Procesa un comando de asistencia basado en una transcripción de texto y un conjunto opcional de proyectos.
- * Identifica intenciones específicas en el texto y redirige a las funciones correspondientes para manejar
- * comandos como crear, buscar, actualizar o contar tareas y proyectos. Si no se identifica una intención clara,
- * utiliza un modelo de lenguaje (Claude) para generar una respuesta contextualizada.
- *
- * @async
- * @function
- * @param {string} transcription - La transcripción del comando de voz proporcionado por el usuario.
- * @param {Array<Object>} [projects=[]] - Lista opcional de proyectos actuales, donde cada proyecto es un objeto con al menos un título.
- * @returns {Promise<Object>} Un objeto con la estructura `{ success: boolean, response: string }` que contiene el éxito de la operación y la respuesta generada.
- *
- * @throws {Error} Si ocurre un problema al interactuar con el cliente OpenAI para generar una respuesta.
- *
- * @example
- * const transcription = "Crear tarea llamada 'Comprar materiales' en el proyecto 'Construcción'";
- * const projects = [{ title: "Construcción" }, { title: "Diseño" }];
- * const result = await processAssistanceCommand(transcription, projects);
- * console.log(result.response);
- */
-async function processAssistanceCommand(transcription, projects = []) {
-  logger.info(`Processing assistance command: "${transcription}"`);
+// ==================== ASISTENCIA GENERAL CON CONTEXTO ====================
+// ==================== ASISTENCIA GENERAL CON CONTEXTO ====================
+async function processAssistanceCommand(transcription, projects, language, userToken) {
+  logger.info(`Processing assistance command with context in ${language}`);
   
-  // Preparar contexto para Claude
-  let projectsContext = "";
-  
-  if (projects && projects.length > 0) {
-    projectsContext = `Proyectos actuales:\n`;
-    for (const project of projects) {
-      projectsContext += `- ${project.title}\n`;
-    }
-  } else {
-    projectsContext = "No hay proyectos actualmente.";
-  }
-  
-  // Intentar identificar si el comando realmente pertenece a otra categoría
   const normalizedText = transcription.toLowerCase()
-    .replace(/á/g, 'a')
-    .replace(/é/g, 'e')
-    .replace(/í/g, 'i')
-    .replace(/ó/g, 'o')
-    .replace(/ú/g, 'u');
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   
-  // Detectar intenciones específicas que podrían haberse perdido
-  if ((normalizedText.includes('crear') || normalizedText.includes('crea')) && 
-      (normalizedText.includes('tarea') || normalizedText.includes('actividad'))) {
-    logger.info('Redirigiendo desde assistance a createTask');
-    return processCreateTaskCommand(transcription, null, projects);
+  // ✅ NO redirigir preguntas de análisis - dejarlas para el asistente
+  const isAnalysisQuery = language === 'en'
+    ? normalizedText.includes('overdue') || normalizedText.includes('analytics') || 
+      normalizedText.includes('progress') || normalizedText.includes('summary') ||
+      normalizedText.includes('explain') || normalizedText.includes('tell me about')
+    : normalizedText.includes('atrasad') || normalizedText.includes('vencid') ||
+      normalizedText.includes('analisis') || normalizedText.includes('progreso') ||
+      normalizedText.includes('resumen') || normalizedText.includes('explicame');
+  
+  if (!isAnalysisQuery) {
+    // Solo redirigir comandos de acción, no preguntas
+    if ((normalizedText.includes('crear') || normalizedText.includes('create') || normalizedText.includes('crea')) && 
+        (normalizedText.includes('tarea') || normalizedText.includes('task') || normalizedText.includes('actividad') || normalizedText.includes('activity'))) {
+      logger.info('Redirecting from assistance to createTask');
+      return processCreateTaskCommand(transcription, null, projects, language);
+    }
+    
+    if ((normalizedText.includes('crear') || normalizedText.includes('create') || normalizedText.includes('crea')) && 
+        (normalizedText.includes('proyecto') || normalizedText.includes('project'))) {
+      logger.info('Redirecting from assistance to createProject');
+      return processCreateProjectCommand(transcription, language);
+    }
   }
   
-  if ((normalizedText.includes('crear') || normalizedText.includes('crea')) && 
-      normalizedText.includes('proyecto')) {
-    logger.info('Redirigiendo desde assistance a createProject');
-    return processCreateProjectCommand(transcription);
+  // ✅ OBTENER CONTEXTO COMPLETO desde el endpoint de assistant
+  let fullContext = null;
+  try {
+    // Construir la URL base desde las variables de entorno o usar localhost
+    const baseURL = process.env.API_URL || 'http://localhost:5500';
+    const contextURL = `${baseURL}/api/assistant/context`;
+    
+    logger.info(`Fetching context from: ${contextURL}`);
+    
+    // ✅ USAR EL TOKEN DEL USUARIO, NO CLAUDE_API_KEY
+    const contextResponse = await axios.get(contextURL, {
+      headers: {
+        'x-auth-token': userToken || process.env.JWT_SECRET // Usar el token del usuario
+      },
+      timeout: 5000 // 5 segundos de timeout
+    });
+    
+    fullContext = contextResponse.data;
+    logger.info(`Full context retrieved: ${fullContext.summary.totalProjects} projects, ${fullContext.summary.totalTasks} tasks`);
+  } catch (error) {
+    logger.error(`Error retrieving full context: ${error.message}`);
+    if (error.response) {
+      logger.error(`Context API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+    }
   }
   
-  if ((normalizedText.includes('buscar') || normalizedText.includes('encontrar') || normalizedText.includes('ver')) && 
-      (normalizedText.includes('tarea') || normalizedText.includes('actividad'))) {
-    logger.info('Redirigiendo desde assistance a searchTask');
-    return processSearchTaskCommand(transcription, null);
-  }
-  
-  if ((normalizedText.includes('buscar') || normalizedText.includes('encontrar') || normalizedText.includes('ver')) && 
-      normalizedText.includes('proyecto')) {
-    logger.info('Redirigiendo desde assistance a searchProject');
-    return processSearchProjectCommand(transcription);
-  }
-  
-  if ((normalizedText.includes('actualizar') || normalizedText.includes('cambiar') || 
-       normalizedText.includes('cambia') || normalizedText.includes('editar') || 
-       normalizedText.includes('modificar')) && 
-      (normalizedText.includes('tarea') || normalizedText.includes('actividad') || 
-       normalizedText.includes('estado') || normalizedText.includes('estatus'))) {
-    logger.info('Redirigiendo desde assistance a updateTask');
-    return processUpdateTaskCommand(transcription, projects);
-  }
-  
-  if ((normalizedText.includes('actualizar') || normalizedText.includes('cambiar') || 
-       normalizedText.includes('cambia') || normalizedText.includes('editar') || 
-       normalizedText.includes('modificar')) && 
-      (normalizedText.includes('proyecto') || normalizedText.includes('prioridad'))) {
-    logger.info('Redirigiendo desde assistance a updateProject');
-    return processUpdateProjectCommand(transcription);
-  }
-  
-  if (normalizedText.includes('cuantas') && normalizedText.includes('tareas')) {
-    logger.info('Redirigiendo desde assistance a countTasks');
-    return processCountTasksCommand();
-  }
-  
-  if (normalizedText.includes('cuantos') && normalizedText.includes('proyectos')) {
-    logger.info('Redirigiendo desde assistance a countProjects');
-    return processCountProjectsCommand();
-  }
-  
-  // Generar respuesta con Claude si está disponible
-  if (openaiClient) {
+  // Generar respuesta con Claude usando contexto completo
+  if (openaiClient && fullContext) {
     try {
-      // Usar Claude vía OpenAI SDK para generar una respuesta con contexto mejorado
+      const systemPrompt = language === 'en'
+        ? `You are a helpful virtual assistant for SmartTask, a task and project management application.
+
+IMPORTANT: You have COMPLETE access to the user's data. Use it to give SPECIFIC, ACCURATE answers.
+
+USER'S COMPLETE DATA:
+${JSON.stringify(fullContext, null, 2)}
+
+Summary Statistics:
+- Total Projects: ${fullContext.summary.totalProjects}
+- Total Tasks: ${fullContext.summary.totalTasks}
+- Pending: ${fullContext.summary.tasksByStatus.pending}
+- In Progress: ${fullContext.summary.tasksByStatus.in_progress}
+- Completed: ${fullContext.summary.tasksByStatus.completed}
+- Overdue: ${fullContext.summary.overdueTasksCount}
+- Upcoming (next 7 days): ${fullContext.summary.upcomingTasksCount}
+
+Your responses MUST:
+1. Use ACTUAL data from the context (project names, task counts, dates)
+2. Be SPECIFIC - mention exact numbers, project names, task titles
+3. Be conversational but accurate
+4. If asked about a specific project, use the data you have about it
+5. For "overdue" questions, use the overdueTasks array
+6. For "analytics" questions, use the summary statistics
+
+Examples of GOOD responses:
+❌ BAD: "I don't have information about that project"
+✅ GOOD: "Your 'Asistencia de tesis' project has 8 tasks: 8 pending, 0 in progress, 0 completed"
+
+❌ BAD: "You might have some overdue tasks"
+✅ GOOD: "You have 5 overdue tasks: 'estado del arte' (2 days overdue), 'Traducción a inglés' (1 day overdue)..."
+
+Current date for reference: ${new Date().toISOString().split('T')[0]}`
+        : `Eres un asistente virtual útil para SmartTask, una aplicación de gestión de tareas y proyectos.
+
+IMPORTANTE: Tienes acceso COMPLETO a los datos del usuario. Úsalos para dar respuestas ESPECÍFICAS y PRECISAS.
+
+DATOS COMPLETOS DEL USUARIO:
+${JSON.stringify(fullContext, null, 2)}
+
+Estadísticas Resumidas:
+- Total Proyectos: ${fullContext.summary.totalProjects}
+- Total Tareas: ${fullContext.summary.totalTasks}
+- Pendientes: ${fullContext.summary.tasksByStatus.pending}
+- En Progreso: ${fullContext.summary.tasksByStatus.in_progress}
+- Completadas: ${fullContext.summary.tasksByStatus.completed}
+- Atrasadas: ${fullContext.summary.overdueTasksCount}
+- Próximas (próximos 7 días): ${fullContext.summary.upcomingTasksCount}
+
+Tus respuestas DEBEN:
+1. Usar datos REALES del contexto (nombres de proyectos, conteos, fechas)
+2. Ser ESPECÍFICAS - mencionar números exactos, nombres de proyectos, títulos de tareas
+3. Ser conversacionales pero precisas
+4. Si preguntan sobre un proyecto específico, usar los datos que tienes sobre él
+5. Para preguntas sobre "atrasadas", usar el array overdueTasks
+6. Para preguntas sobre "análisis", usar las estadísticas del resumen
+
+Ejemplos de respuestas BUENAS:
+❌ MAL: "No tengo información sobre ese proyecto"
+✅ BIEN: "Tu proyecto 'Asistencia de tesis' tiene 8 tareas: 8 pendientes, 0 en progreso, 0 completadas"
+
+❌ MAL: "Podrías tener algunas tareas atrasadas"
+✅ BIEN: "Tienes 5 tareas atrasadas: 'estado del arte' (2 días de retraso), 'Traducción a inglés' (1 día de retraso)..."
+
+Fecha actual para referencia: ${new Date().toISOString().split('T')[0]}`;
+      
+      const userPrompt = language === 'en'
+        ? `User question: "${transcription}"
+
+Provide a SPECIFIC answer using the ACTUAL data from the context. Include real project names, task counts, and dates.`
+        : `Pregunta del usuario: "${transcription}"
+
+Proporciona una respuesta ESPECÍFICA usando los datos REALES del contexto. Incluye nombres reales de proyectos, conteos de tareas y fechas.`;
+      
       const completion = await openaiClient.chat.completions.create({
-        model: "claude-3-haiku-20240307",
+        model: "claude-sonnet-4-20250514",
         messages: [
-          { 
-            role: "system", 
-            content: `Eres un asistente virtual útil para SmartTask, una aplicación de gestión de tareas y proyectos.
-            
-            La aplicación permite a los usuarios:
-            - Crear y gestionar proyectos con títulos, descripciones, fechas y prioridades
-            - Crear y gestionar tareas dentro de proyectos
-            - Buscar tareas por varios criterios
-            - Actualizar detalles de tareas
-            
-            Tus respuestas deben ser:
-            1. Amigables y orientadas a la acción
-            2. Concisas (2-4 oraciones)
-            3. Específicas a la aplicación SmartTask
-            4. Informativas sobre cómo el usuario puede realizar la acción dentro de la aplicación
-            
-            IMPORTANTE: No digas "puedo ayudarte con eso" sin añadir información específica de cómo hacerlo.
-            En lugar de solo sugerir usar la interfaz de la aplicación, actúa como si pudieras realizar acciones directamente o guiar al usuario paso a paso.
-            
-            Contexto actual:
-            ${projectsContext}` 
-          },
-          { 
-            role: "user", 
-            content: `El usuario ha dicho: "${transcription}"
-            
-            Proporciona una respuesta útil que lo guíe exactamente en lo que necesita hacer. Sé específico sobre la funcionalidad de la aplicación y cómo pueden realizarse las acciones solicitadas.` 
-          }
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
         ],
-        temperature: 0.7,
-        max_tokens: 200,
+        temperature: 0.3, // ✅ Reducido para respuestas más precisas
+        max_tokens: 500,
       });
 
       return {
@@ -2453,44 +2177,36 @@ async function processAssistanceCommand(transcription, projects = []) {
     }
   }
   
+  // Si no hay contexto o Claude no está disponible, dar respuesta básica
+  const projectsContext = projects && projects.length > 0
+    ? projects.map(p => p.title).join(', ')
+    : (language === 'en' ? 'No projects' : 'No hay proyectos');
+  
   // Respuestas predefinidas basadas en palabras clave (fallback)
-  
-  if (normalizedText.includes('hola') || 
-      normalizedText.includes('buenos dias') || 
-      normalizedText.includes('buenas tardes') || 
-      normalizedText.includes('buenas noches')) {
+  if (normalizedText.includes('hola') || normalizedText.includes('hello')) {
     return {
       success: true,
-      response: '¡Hola! Soy tu asistente virtual de SmartTask. Puedo ayudarte a gestionar tus tareas y proyectos mediante comandos de voz. ¿Qué te gustaría hacer hoy?'
+      response: language === 'en'
+        ? 'Hello! I\'m your SmartTask assistant. I have access to all your projects and tasks. What would you like to know?'
+        : '¡Hola! Soy tu asistente de SmartTask. Tengo acceso a todos tus proyectos y tareas. ¿Qué te gustaría saber?'
     };
   }
   
-  if (normalizedText.includes('ayuda') || 
-      normalizedText.includes('que puedes hacer')) {
+  if (normalizedText.includes('ayuda') || normalizedText.includes('help')) {
     return {
       success: true,
-      response: 'Puedo ayudarte con varias acciones en SmartTask: crear tareas o proyectos, buscar información, actualizar tareas existentes, contar tus tareas y proyectos, y más. Solo dime qué necesitas y lo haré por ti.'
-    };
-  }
-  
-  if (normalizedText.includes('como crear') && normalizedText.includes('tarea')) {
-    return {
-      success: true,
-      response: 'Para crear una tarea, solo dime algo como "Crear tarea [título] en el proyecto [nombre]". Puedo añadir automáticamente detalles como la descripción y fecha de vencimiento, o puedes especificarlos tú mismo.'
-    };
-  }
-  
-  if (normalizedText.includes('como crear') && normalizedText.includes('proyecto')) {
-    return {
-      success: true,
-      response: 'Para crear un proyecto nuevo, dime "Crear proyecto [nombre]". También puedes añadir detalles como "con prioridad alta" o una descripción, y yo me encargaré de crearlo con todos esos datos.'
+      response: language === 'en'
+        ? `I can help you with: creating tasks/projects, searching, analyzing your work, and more. You have ${projects.length} project(s) currently.`
+        : `Puedo ayudarte con: crear tareas/proyectos, buscar, analizar tu trabajo, y más. Actualmente tienes ${projects.length} proyecto(s).`
     };
   }
   
   // Respuesta predeterminada
   return {
     success: true,
-    response: 'Estoy aquí para ayudarte con la gestión de tus tareas y proyectos. Puedes pedirme que cree tareas o proyectos, busque información, actualice tareas existentes, o te muestre estadísticas de tu trabajo. ¿En qué puedo asistirte hoy?'
+    response: language === 'en'
+      ? `I'm here to help! You have ${projects.length} project(s). Ask me about your tasks, projects, deadlines, or progress.`
+      : `¡Estoy aquí para ayudar! Tienes ${projects.length} proyecto(s). Pregúntame sobre tus tareas, proyectos, fechas límite o progreso.`
   };
 }
 
