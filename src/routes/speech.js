@@ -143,7 +143,7 @@ router.post('/speech-to-text', auth, upload.single('audio'), async (req, res) =>
       },
       config: {
         encoding: encoding,
-        sampleRateHertz: 16000, // Frecuencia de muestreo recomendada
+        //sampleRateHertz: 16000, // Frecuencia de muestreo recomendada
         languageCode: 'es-ES', // Español (España)
         alternativeLanguageCodes: ['es-MX', 'es-CO', 'es-AR', 'es-CL', 'es-US'], // Soporte para variantes regionales
         enableAutomaticPunctuation: true,
