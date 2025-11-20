@@ -107,6 +107,69 @@ The server should sync the new columns to the database automatically.
 
 ---
 
+## 🆕 New API Endpoint: Get Project Statuses
+
+### GET `/api/projects/:id/statuses`
+
+**Description**: Returns the available statuses (Kanban columns) for a specific project. Use this endpoint in your frontend to populate the status dropdown when creating/editing tasks.
+
+**Request**:
+```bash
+curl -X GET http://localhost:5500/api/projects/1/statuses \
+  -H "x-auth-token: YOUR_JWT_TOKEN"
+```
+
+**Response** (200 OK):
+```json
+{
+  "projectId": 1,
+  "projectTitle": "Banking System Development",
+  "kanban_template": "architecture",
+  "statuses": [
+    {
+      "id": "requirements",
+      "title": "Requerimientos",
+      "color": "#e91e63",
+      "icon": "📝"
+    },
+    {
+      "id": "design",
+      "title": "Diseño",
+      "color": "#9c27b0",
+      "icon": "🎨"
+    },
+    {
+      "id": "construction",
+      "title": "Construcción",
+      "color": "#2196f3",
+      "icon": "🏗️"
+    },
+    {
+      "id": "validation",
+      "title": "Validación",
+      "color": "#4caf50",
+      "icon": "✔️"
+    }
+  ]
+}
+```
+
+**Frontend Usage Example**:
+```javascript
+// Fetch available statuses when creating a task
+const response = await fetch(`/api/projects/${projectId}/statuses`, {
+  headers: { 'x-auth-token': token }
+});
+const { statuses } = await response.json();
+
+// Populate dropdown
+statuses.forEach(status => {
+  // <option value={status.id}>{status.icon} {status.title}</option>
+});
+```
+
+---
+
 ## 🧪 API Testing Examples
 
 ### Test 1: Create Project with Default Template

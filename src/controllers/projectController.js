@@ -263,4 +263,40 @@ async function getAllProjectIds(req, res) {
   }
 }
 
-module.exports = { createProject, getAllProjects, updateProject, deleteProject, getProjectById, getAllProjectIds };
+/**
+ * Obtiene los estados disponibles (columnas Kanban) para un proyecto específico.
+ */
+async function getProjectStatuses(req, res) {
+  try {
+    const { id } = req.params;
+
+    const project = await Project.findByPk(id, {
+      attributes: ['id', 'title', 'kanban_template', 'kanban_columns']
+    });
+
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    // Extraer solo los IDs y títulos de las columnas para el frontend
+    const statuses = project.kanban_columns.map(col => ({
+      id: col.id,
+      title: col.title,
+      color: col.color,
+      icon: col.icon
+    }));
+
+    logger.info(`Statuses retrieved for project: ${project.id}`);
+    res.status(200).json({
+      projectId: project.id,
+      projectTitle: project.title,
+      kanban_template: project.kanban_template,
+      statuses: statuses
+    });
+  } catch (error) {
+    logger.error('Error getting project statuses', error);
+    res.status(500).json({ message: 'Error getting project statuses' });
+  }
+}
+
+module.exports = { createProject, getAllProjects, updateProject, deleteProject, getProjectById, getAllProjectIds, getProjectStatuses };
