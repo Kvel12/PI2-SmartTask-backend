@@ -10,15 +10,15 @@ const logger = require('../logger');
  */
 function normalizeDateForResponse(dateValue) {
   if (!dateValue) return null;
-  
+
   try {
     const date = new Date(dateValue);
     if (isNaN(date.getTime())) return null;
-    
+
     const year = date.getUTCFullYear();
     const month = String(date.getUTCMonth() + 1).padStart(2, '0');
     const day = String(date.getUTCDate()).padStart(2, '0');
-    
+
     return `${year}-${month}-${day}`;
   } catch (error) {
     logger.error(`Error normalizing date: ${error.message}`);
@@ -53,12 +53,12 @@ async function createTask(req, res) {
     });
 
     logger.info(`Task created: ${task.id}`);
-    
+
     // ✅ NORMALIZAR fechas antes de devolver
     const taskResponse = task.toJSON();
     taskResponse.completion_date = normalizeDateForResponse(task.completion_date);
     taskResponse.creation_date = normalizeDateForResponse(task.creation_date);
-    
+
     res.status(201).json(taskResponse);
   } catch (error) {
     logger.error(`Error creating task: ${error.message}`, error);
@@ -71,7 +71,16 @@ async function createTask(req, res) {
  */
 async function getAllTasks(req, res) {
   try {
+    const { assignee, status, dueDate, priority } = req.query;
+    const filters = {};
+
+    if (assignee) filters.assignee = assignee;
+    if (status) filters.status = status;
+    if (dueDate) filters.completion_date = dueDate;  // Filtra por fecha límite
+    if (priority) filters.priority = priority;
+
     const tasks = await Task.findAll({
+      where: filters,
       include: [
         {
           model: Project,
@@ -82,7 +91,7 @@ async function getAllTasks(req, res) {
     });
 
     logger.info('All tasks retrieved');
-    
+
     // ✅ NORMALIZAR fechas para todas las tareas
     const tasksResponse = tasks.map(task => {
       const taskData = task.toJSON();
@@ -90,7 +99,7 @@ async function getAllTasks(req, res) {
       taskData.creation_date = normalizeDateForResponse(task.creation_date);
       return taskData;
     });
-    
+
     res.status(200).json(tasksResponse);
   } catch (error) {
     logger.error(`Error getting all tasks: ${error.message}`, error);
@@ -116,7 +125,7 @@ async function getTasksByProject(req, res) {
     });
 
     logger.info(`Tasks retrieved for project: ${projectId}`);
-    
+
     // ✅ NORMALIZAR fechas para todas las tareas
     const tasksResponse = tasks.map(task => {
       const taskData = task.toJSON();
@@ -124,7 +133,7 @@ async function getTasksByProject(req, res) {
       taskData.creation_date = normalizeDateForResponse(task.creation_date);
       return taskData;
     });
-    
+
     res.status(200).json(tasksResponse);
   } catch (error) {
     logger.error(`Error getting tasks by project: ${error.message}`, error);
@@ -153,12 +162,12 @@ async function getTaskById(req, res) {
     }
 
     logger.info(`Task retrieved: ${task.id}`);
-    
+
     // ✅ NORMALIZAR fechas antes de devolver
     const taskResponse = task.toJSON();
     taskResponse.completion_date = normalizeDateForResponse(task.completion_date);
     taskResponse.creation_date = normalizeDateForResponse(task.creation_date);
-    
+
     res.status(200).json(taskResponse);
   } catch (error) {
     logger.error(`Error getting task: ${error.message}`, error);
@@ -201,14 +210,14 @@ async function updateTask(req, res) {
 
     await task.save();
     logger.info(`Task updated: ${task.id}`);
-    
+
     // ✅ NORMALIZAR fechas antes de devolver
     const taskResponse = task.toJSON();
     taskResponse.completion_date = normalizeDateForResponse(task.completion_date);
     taskResponse.creation_date = normalizeDateForResponse(task.creation_date);
-    
+
     console.log('📅 Task response being sent:', taskResponse); // Para debugging
-    
+
     res.status(200).json(taskResponse);
   } catch (error) {
     logger.error(`Error updating task: ${error.message}`, error);

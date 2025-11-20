@@ -22,32 +22,43 @@ const Task = sequelize.define('Task', {
     primaryKey: true, // Define el campo como clave primaria
     autoIncrement: true // Se incrementa automáticamente en cada nuevo registro
   },
-  
+
   // Título de la tarea
   title: {
     type: DataTypes.STRING(1000), // Cadena de hasta 1000 caracteres
     allowNull: false // No puede ser nulo
   },
-  
+
   // Descripción de la tarea (opcional)
   description: {
     type: DataTypes.TEXT, // Texto de tamaño variable
     allowNull: true // Puede ser nulo
   },
-  
+
   // Fecha de creación de la tarea
   creation_date: {
     type: DataTypes.DATE,
     allowNull: false, // Obligatorio
     defaultValue: DataTypes.NOW // Valor por defecto: fecha y hora actual
   },
-  
+
   // Fecha de finalización de la tarea
   completion_date: {
     type: DataTypes.DATE,
     allowNull: false // Obligatorio (debe completarse en algún momento)
   },
-  
+
+  assignee: {
+    type: DataTypes.INTEGER,  // ID del usuario asignado
+    allowNull: true
+  },
+
+  priority: {
+    type: DataTypes.ENUM('low', 'medium', 'high'),
+    allowNull: true,
+    defaultValue: 'medium'
+  },
+
   // Estado de la tarea (pendiente, en progreso, completada o cancelada)
   status: {
     type: DataTypes.ENUM('in_progress', 'completed', 'pending', 'cancelled'),
