@@ -79,22 +79,10 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Conexión a la base de datos y sincronización
+// Conexión a la base de datos
 sequelize.authenticate()
   .then(() => {
     winston.info('Database connection has been established successfully.');
-    return sequelize.sync({ alter: process.env.NODE_ENV === 'production' ? false : true }); // Sincroniza modelos con la base de datos
-  })
-  .then(async () => {
-    winston.info('Database synchronized');
-    
-    // Muestra en logs las tablas creadas
-    try {
-      const tableNames = await sequelize.getQueryInterface().showAllTables();
-      winston.info('Tablas creadas:', tableNames);
-    } catch (error) {
-      winston.error('Error listando tablas:', error);
-    }
     
     // Inicia el servidor en el puerto definido
     app.listen(PORT, () => {
@@ -103,4 +91,5 @@ sequelize.authenticate()
   })
   .catch(err => {
     winston.error('Unable to connect to the database:', err);
+    process.exit(1);
   });

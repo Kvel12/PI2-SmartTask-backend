@@ -1,13 +1,13 @@
 'use strict';
 
 /**
- * Migration to add kanban_template and kanban_columns fields to Projects table
+ * Migration to add kanban_template and kanban_columns fields to projects table
  * This enables dynamic Kanban board configuration per project
  */
 module.exports = {
   up: async (queryInterface, Sequelize) => {
     // Agregar kanban_template
-    await queryInterface.addColumn('Projects', 'kanban_template', {
+    await queryInterface.addColumn('projects', 'kanban_template', {
       type: Sequelize.ENUM('default', 'architecture', 'systems_engineering'),
       allowNull: false,
       defaultValue: 'default',
@@ -15,7 +15,7 @@ module.exports = {
     });
 
     // Agregar kanban_columns
-    await queryInterface.addColumn('Projects', 'kanban_columns', {
+    await queryInterface.addColumn('projects', 'kanban_columns', {
       type: Sequelize.JSONB,
       allowNull: false,
       defaultValue: [
@@ -27,17 +27,17 @@ module.exports = {
       comment: 'Array of column objects defining the Kanban board structure'
     });
 
-    console.log('✅ Successfully added kanban_template and kanban_columns to Projects table');
+    console.log('✅ Successfully added kanban_template and kanban_columns to projects table');
   },
 
   down: async (queryInterface, Sequelize) => {
     // Eliminar columnas en caso de rollback
-    await queryInterface.removeColumn('Projects', 'kanban_columns');
-    await queryInterface.removeColumn('Projects', 'kanban_template');
+    await queryInterface.removeColumn('projects', 'kanban_columns');
+    await queryInterface.removeColumn('projects', 'kanban_template');
 
     // Eliminar el tipo ENUM
-    await queryInterface.sequelize.query('DROP TYPE IF EXISTS "enum_Projects_kanban_template";');
+    await queryInterface.sequelize.query('DROP TYPE IF EXISTS "enum_projects_kanban_template";');
 
-    console.log('✅ Successfully removed kanban fields from Projects table');
+    console.log('✅ Successfully removed kanban fields from projects table');
   }
 };

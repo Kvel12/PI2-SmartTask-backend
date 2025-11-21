@@ -11,7 +11,9 @@ const sequelize = require('../config/database');
  * @property {string|null} description - A detailed description of the task. Can be null.
  * @property {Date} creation_date - The date when the task was created. Defaults to the current date and time.
  * @property {Date} completion_date - The date when the task is expected to be completed. Cannot be null.
- * @property {'in_progress'|'completed'|'pending'|'cancelled'} status - The current status of the task. Defaults to 'pending'.
+ * @property {string} status - The current status of the task. Must match a column ID from the project's kanban_columns. Defaults to 'pending'.
+ * @property {'low'|'medium'|'high'} priority - The priority level of the task. Defaults to 'medium'.
+ * @property {Object|null} assigned_member - JSON object with member information (name, email). Can be null.
  * @property {number} projectId - The ID of the associated project. Cannot be null.
  */
 
@@ -48,11 +50,7 @@ const Task = sequelize.define('Task', {
     allowNull: false // Obligatorio (debe completarse en algún momento)
   },
 
-  assignee: {
-    type: DataTypes.INTEGER,  // ID del usuario asignado
-    allowNull: true
-  },
-
+  // Prioridad de la tarea
   priority: {
     type: DataTypes.ENUM('low', 'medium', 'high'),
     allowNull: true,
@@ -69,10 +67,12 @@ const Task = sequelize.define('Task', {
   
   // Miembro asignado a la tarea (opcional)
   assigned_member: {
-    type: DataTypes.JSON,
-    allowNull: true
+    type: DataTypes.STRING, // Email del miembro asignado
+    allowNull: true,
+    comment: 'Email of the assigned project member'
   },
 
+  // ID del proyecto asociado
   projectId: {
     type: DataTypes.INTEGER,
     allowNull: false,
