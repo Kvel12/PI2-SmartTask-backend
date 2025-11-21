@@ -79,7 +79,16 @@ async function createTask(req, res) {
  */
 async function getAllTasks(req, res) {
   try {
+    const { assignee, status, dueDate, priority } = req.query;
+    const filters = {};
+
+    if (assignee) filters.assignee = assignee;
+    if (status) filters.status = status;
+    if (dueDate) filters.completion_date = dueDate;  // Filtra por fecha límite
+    if (priority) filters.priority = priority;
+
     const tasks = await Task.findAll({
+      where: filters,
       include: [
         {
           model: Project,

@@ -48,7 +48,18 @@ const Task = sequelize.define('Task', {
     allowNull: false // Obligatorio (debe completarse en algún momento)
   },
 
-  // Estado de la tarea (ahora dinámico basado en las columnas del proyecto)
+  assignee: {
+    type: DataTypes.INTEGER,  // ID del usuario asignado
+    allowNull: true
+  },
+
+  priority: {
+    type: DataTypes.ENUM('low', 'medium', 'high'),
+    allowNull: true,
+    defaultValue: 'medium'
+  },
+
+  // Estado de la tarea (pendiente, en progreso, completada o cancelada)
   status: {
     type: DataTypes.STRING,
     allowNull: false,

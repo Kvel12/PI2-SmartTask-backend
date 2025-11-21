@@ -1,5 +1,5 @@
 const { body, validationResult } = require('express-validator');
-
+const { query } = require('express-validator');
 /**
  * Middleware para validar los datos de entrada al crear o actualizar un proyecto.
  * 
@@ -93,15 +93,15 @@ const validateProjectUpdate = [
  *     res.status(201).send('Task created successfully');
  * });
  */
-const validateTaskCreation= [    // Validar que el título de la tarea no esté vacío
+const validateTaskCreation = [    // Validar que el título de la tarea no esté vacío
     body('title')
         .notEmpty().withMessage('The task title is required'), // Verifica que el título no esté vacío
-    
+
     // Validar que la fecha de inicio sea obligatoria y tenga un formato válido
     body('creation_date')
         .notEmpty().withMessage('The start date is required') // Verifica que la fecha de inicio no esté vacía
         .isISO8601().withMessage('The start date must be in a valid ISO 8601 format'), // Verifica que la fecha tenga un formato válido
-    
+
     // Validar que la fecha de finalización sea obligatoria, tenga un formato válido y sea mayor que la fecha de inicio
     body('completion_date')
         .notEmpty().withMessage('The completion date is required') // Verifica que la fecha de finalización no esté vacía
@@ -112,7 +112,7 @@ const validateTaskCreation= [    // Validar que el título de la tarea no esté 
             }
             return true;
         }),
-    
+
     // Middleware para manejar errores de validación
     (req, res, next) => {
         const errors = validationResult(req);
@@ -148,7 +148,7 @@ const validateTaskUpdate = [
         .optional() // El campo es opcional
         .isISO8601().withMessage('The start date must be in a valid ISO 8601 format'), // Verifica que la fecha tenga un formato válido
 
-   // Validar que la fecha de finalización, si está presente, tenga un formato válido y sea mayor que la fecha de inicio
+    // Validar que la fecha de finalización, si está presente, tenga un formato válido y sea mayor que la fecha de inicio
     body('completion_date')
         .optional() // El campo es opcional
         .isISO8601().withMessage('The completion date must be in a valid ISO 8601 format') // Verifica que la fecha tenga un formato válido
@@ -170,4 +170,32 @@ const validateTaskUpdate = [
     }
 ];
 
-module.exports = { validateProjectCreation, validateProjectUpdate, validateTaskCreation, validateTaskUpdate };
+const validateTaskFilters = [
+    query('assignee')
+        .optional()
+        .isInt().withMessage('Assignee must be a numeric ID'),
+
+    query('status')
+        .optional()
+        .isIn(['in_progress', 'completed', 'pending', 'cancelled'])
+        .withMessage('Invalid status value'),
+
+    query('dueDate')
+        .optional()
+        .isISO8601().withMessage('The dueDate filter must be a valid ISO 8601 date'),
+
+    query('priority')
+        .optional()
+        .isIn(['low', 'medium', 'high'])
+        .withMessage('Invalid priority value'),
+
+    (req, res, next) => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ errors: errors.array() });
+        }
+        next();
+    }
+];
+
+module.exports = { validateProjectCreation, validateProjectUpdate, validateTaskCreation, validateTaskUpdate, validateTaskFilters };
