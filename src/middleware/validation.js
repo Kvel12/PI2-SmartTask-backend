@@ -1,5 +1,5 @@
 const { body, validationResult } = require('express-validator');
-
+const { query } = require('express-validator');
 /**
  * Middleware para validar los datos de entrada al crear o actualizar un proyecto.
  * 
