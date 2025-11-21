@@ -43,16 +43,24 @@ async function createTask(req, res) {
       return res.status(404).json({ message: 'Project not found' });
     }
 
+    // Validar que el status sea válido según las columnas del proyecto
+    const validStatuses = project.kanban_columns.map(col => col.id);
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({
+        message: `Invalid status '${status}'. Valid statuses for this project: ${validStatuses.join(', ')}`
+      });
+    }
+
     const task = await Task.create({
       title,
       description,
       creation_date,
       completion_date,
-      status,
+      status: status || validStatuses[0], // Usar primera columna por defecto
       projectId
     });
 
-    logger.info(`Task created: ${task.id}`);
+    logger.info(`Task created: ${task.id} with status: ${task.status}`);
 
     // ✅ NORMALIZAR fechas antes de devolver
     const taskResponse = task.toJSON();
@@ -193,19 +201,35 @@ async function updateTask(req, res) {
       return res.status(404).json({ message: 'Task not found' });
     }
 
+    // Determinar el proyecto actual o el nuevo si se cambia
+    let targetProjectId = task.projectId;
+
     if (projectId && projectId !== task.projectId) {
       const project = await Project.findByPk(projectId);
       if (!project) {
         return res.status(404).json({ message: 'Project not found' });
       }
       task.projectId = projectId;
+      targetProjectId = projectId;
+    }
+
+    // Validar status si se está actualizando
+    if (status !== undefined) {
+      const project = await Project.findByPk(targetProjectId);
+      const validStatuses = project.kanban_columns.map(col => col.id);
+
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          message: `Invalid status '${status}'. Valid statuses for this project: ${validStatuses.join(', ')}`
+        });
+      }
     }
 
     // ✅ CORREGIDO: Usar !== undefined para permitir valores vacíos
     if (title !== undefined) task.title = title;
     if (description !== undefined) task.description = description;
     if (creation_date !== undefined) task.creation_date = creation_date;
-    if (completion_date !== undefined) task.completion_date = completion_date;  // ✅ CORREGIDO
+    if (completion_date !== undefined) task.completion_date = completion_date;
     if (status !== undefined) task.status = status;
 
     await task.save();

@@ -50,7 +50,7 @@ Este repositorio contiene el backend de SmartTask, una aplicación modular de ge
      # Configuración de la base de datos
      DB_HOST=localhost
      DB_USER=root
-     DB_PASSWORD=tu_contraseña
+     DB_PASS=tu_contraseña
      DB_NAME=smarttask_db
 
      # Configuración JWT

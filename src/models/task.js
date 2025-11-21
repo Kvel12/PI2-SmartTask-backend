@@ -4,7 +4,7 @@ const sequelize = require('../config/database');
 
 /**
  * Represents a Task model in the database.
- * 
+ *
  * @typedef {Object} Task
  * @property {number} id - The unique identifier for the task. Auto-incremented primary key.
  * @property {string} title - The title of the task. Maximum length of 1000 characters. Cannot be null.
@@ -61,9 +61,10 @@ const Task = sequelize.define('Task', {
 
   // Estado de la tarea (pendiente, en progreso, completada o cancelada)
   status: {
-    type: DataTypes.ENUM('in_progress', 'completed', 'pending', 'cancelled'),
+    type: DataTypes.STRING,
     allowNull: false,
-    defaultValue: 'pending'
+    defaultValue: 'pending',
+    comment: 'Task status - must match a column ID from the associated project\'s kanban_columns'
   },
   projectId: {
     type: DataTypes.INTEGER,
