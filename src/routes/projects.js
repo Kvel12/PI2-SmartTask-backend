@@ -1,5 +1,5 @@
 const express = require('express');
-const { createProject, updateProject, deleteProject, getProjectById, getAllProjects, getAllProjectIds } = require('../controllers/projectController');
+const { createProject, updateProject, deleteProject, getProjectById, getAllProjects, getAllProjectIds, getProjectMembers } = require('../controllers/projectController');
 const { validateProjectCreation, validateProjectUpdate } = require('../middleware/validation');
 const auth = require('../middleware/auth');
 
@@ -16,6 +16,9 @@ router.put('/:id', auth, validateProjectUpdate, updateProject);
 
 // Ruta para eliminar un proyecto (protegida)
 router.delete('/:id', auth, deleteProject);
+
+// Ruta para obtener los miembros de un proyecto (protegida)
+router.get('/:id/members', auth, getProjectMembers);
 
 // Ruta para obtener un proyecto por su ID (protegida)
 router.get('/:id', auth, getProjectById);

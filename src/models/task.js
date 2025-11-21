@@ -54,6 +54,13 @@ const Task = sequelize.define('Task', {
     allowNull: false,
     defaultValue: 'pending'
   },
+  
+  // Miembro asignado a la tarea (opcional)
+  assigned_member: {
+    type: DataTypes.JSON,
+    allowNull: true
+  },
+
   projectId: {
     type: DataTypes.INTEGER,
     allowNull: false,

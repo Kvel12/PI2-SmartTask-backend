@@ -55,6 +55,12 @@ const Project = sequelize.define('Project', {
     type: DataTypes.ENUM('high', 'medium', 'low'), // Valores permitidos
     allowNull: true, // Puede ser nulo
     defaultValue: 'medium' // Valor por defecto: medio
+  },
+
+  // Miembros del proyecto (opcional)
+  members: {
+    type: DataTypes.JSON,
+    allowNull: true
   }
 }, {
   timestamps: true // Agrega automáticamente campos createdAt y updatedAt

@@ -31,14 +31,14 @@ function normalizeDateForResponse(dateValue) {
  */
 async function createProject(req, res) {
     try {
-      const { title, description, priority, culmination_date } = req.body;
+      const { title, description, priority, culmination_date, members } = req.body;
 
       const existingProject = await Project.findOne({ where: { title } });
       if (existingProject) {
           return res.status(400).json({ message: 'The project name is already in use, please change it.' });
       }
       
-      const project = await Project.create({title, description, priority, culmination_date });
+      const project = await Project.create({title, description, priority, culmination_date, members });
       logger.info(`Project created: ${project.id}`);
       
       // ✅ NORMALIZAR fechas antes de devolver
@@ -82,7 +82,7 @@ async function getAllProjects(req, res) {
 async function updateProject(req, res) {
   try {
     const { id } = req.params;
-    const { title, description, priority, culmination_date } = req.body;
+    const { title, description, priority, culmination_date, members } = req.body;
 
     const project = await Project.findByPk(id);
     if (!project) {
@@ -107,6 +107,7 @@ async function updateProject(req, res) {
     if (description !== undefined) project.description = description;
     if (priority !== undefined) project.priority = priority;
     if (culmination_date !== undefined) project.culmination_date = culmination_date;  // ✅ CORREGIDO
+    if (members !== undefined) project.members = members;
 
     await project.save();
     logger.info(`Project updated: ${project.id}`);
@@ -182,6 +183,29 @@ async function getProjectById(req, res) {
 }
 
 /**
+ * Recupera los miembros de un proyecto específico.
+ */
+async function getProjectMembers(req, res) {
+  try {
+    const { id } = req.params;
+
+    const project = await Project.findByPk(id, {
+      attributes: ['members']
+    });
+
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    logger.info(`Project members retrieved for project: ${id}`);
+    res.status(200).json(project.members || []);
+  } catch (error) {
+    logger.error('Error getting project members', error);
+    res.status(500).json({ message: 'Error getting project members' });
+  }
+}
+
+/**
  * Recupera todos los IDs de los proyectos almacenados.
  */
 async function getAllProjectIds(req, res) {
@@ -199,4 +223,4 @@ async function getAllProjectIds(req, res) {
   }
 }
 
-module.exports = { createProject, getAllProjects, updateProject, deleteProject, getProjectById, getAllProjectIds };
+module.exports = { createProject, getAllProjects, updateProject, deleteProject, getProjectById, getAllProjectIds, getProjectMembers };
