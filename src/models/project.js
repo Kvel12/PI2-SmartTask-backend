@@ -12,6 +12,7 @@ const sequelize = require('../config/database');
  * @property {Date} creation_date - The date when the project was created. Defaults to the current date.
  * @property {Date|null} culmination_date - The date when the project is expected to be completed. Optional field.
  * @property {'high'|'medium'|'low'} priority - The priority level of the project. Defaults to 'medium'.
+ * @property {Array<Object>} members - Array of project members with name and email.
  * @property {'default'|'architecture'|'systems_engineering'} kanban_template - Kanban template type. Defaults to 'default'.
  * @property {Array<Object>} kanban_columns - Array of column objects for the Kanban board.
  *
@@ -57,6 +58,13 @@ const Project = sequelize.define('Project', {
     type: DataTypes.ENUM('high', 'medium', 'low'), // Valores permitidos
     allowNull: true, // Puede ser nulo
     defaultValue: 'medium' // Valor por defecto: medio
+  },
+
+  // Miembros del proyecto (opcional)
+  members: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    comment: 'Array of project members with name and email'
   },
 
   // Plantilla Kanban seleccionada

@@ -36,6 +36,7 @@ async function createProject(req, res) {
         description,
         priority,
         culmination_date,
+        members,
         kanban_template,
         kanban_columns
       } = req.body;
@@ -59,6 +60,7 @@ async function createProject(req, res) {
         description,
         priority,
         culmination_date,
+        members,
         kanban_template: kanban_template || 'default',
         kanban_columns: kanban_columns || undefined // usa default del modelo
       });
@@ -119,6 +121,7 @@ async function updateProject(req, res) {
       description,
       priority,
       culmination_date,
+      members,
       kanban_template,
       kanban_columns
     } = req.body;
@@ -161,6 +164,7 @@ async function updateProject(req, res) {
     if (description !== undefined) project.description = description;
     if (priority !== undefined) project.priority = priority;
     if (culmination_date !== undefined) project.culmination_date = culmination_date;
+    if (members !== undefined) project.members = members;
     if (kanban_template !== undefined) project.kanban_template = kanban_template;
     if (kanban_columns !== undefined) project.kanban_columns = kanban_columns;
 
@@ -246,6 +250,29 @@ async function getProjectById(req, res) {
 }
 
 /**
+ * Recupera los miembros de un proyecto específico.
+ */
+async function getProjectMembers(req, res) {
+  try {
+    const { id } = req.params;
+
+    const project = await Project.findByPk(id, {
+      attributes: ['members']
+    });
+
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    logger.info(`Project members retrieved for project: ${id}`);
+    res.status(200).json(project.members || []);
+  } catch (error) {
+    logger.error('Error getting project members', error);
+    res.status(500).json({ message: 'Error getting project members' });
+  }
+}
+
+/**
  * Recupera todos los IDs de los proyectos almacenados.
  */
 async function getAllProjectIds(req, res) {
@@ -299,4 +326,4 @@ async function getProjectStatuses(req, res) {
   }
 }
 
-module.exports = { createProject, getAllProjects, updateProject, deleteProject, getProjectById, getAllProjectIds, getProjectStatuses };
+module.exports = {createProject, getAllProjects, updateProject, deleteProject, getProjectById, getAllProjectIds, getProjectMembers, getProjectStatuses};

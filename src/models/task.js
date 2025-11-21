@@ -66,6 +66,13 @@ const Task = sequelize.define('Task', {
     defaultValue: 'pending',
     comment: 'Task status - must match a column ID from the associated project\'s kanban_columns'
   },
+  
+  // Miembro asignado a la tarea (opcional)
+  assigned_member: {
+    type: DataTypes.JSON,
+    allowNull: true
+  },
+
   projectId: {
     type: DataTypes.INTEGER,
     allowNull: false,

@@ -36,7 +36,7 @@ async function createTask(req, res) {
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { title, description, creation_date, completion_date, status, projectId } = req.body;
+    const { title, description, creation_date, completion_date, status, projectId, assigned_member } = req.body;
 
     const project = await Project.findByPk(projectId);
     if (!project) {
@@ -57,7 +57,8 @@ async function createTask(req, res) {
       creation_date,
       completion_date,
       status: status || validStatuses[0], // Usar primera columna por defecto
-      projectId
+      projectId,
+      assigned_member
     });
 
     logger.info(`Task created: ${task.id} with status: ${task.status}`);
@@ -194,7 +195,7 @@ async function updateTask(req, res) {
     }
 
     const { id } = req.params;
-    const { title, description, creation_date, completion_date, status, projectId } = req.body;
+    const { title, description, creation_date, completion_date, status, projectId, assigned_member } = req.body;
 
     const task = await Task.findByPk(id);
     if (!task) {
@@ -231,6 +232,7 @@ async function updateTask(req, res) {
     if (creation_date !== undefined) task.creation_date = creation_date;
     if (completion_date !== undefined) task.completion_date = completion_date;
     if (status !== undefined) task.status = status;
+    if (assigned_member !== undefined) task.assigned_member = assigned_member;
 
     await task.save();
     logger.info(`Task updated: ${task.id}`);
