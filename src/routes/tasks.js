@@ -1,12 +1,12 @@
 const express = require('express');
 const { createTask, getAllTasks, getTasksByProject, getTaskById, updateTask, deleteTask } = require('../controllers/taskController');
-const { validateTaskUpdate, validateTaskCreation } = require('../middleware/validation');
+const { validateTaskUpdate, validateTaskCreation, validateTaskFilters } = require('../middleware/validation');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
 
 // Obtener todas las tareas
-router.get('/', auth, getAllTasks);
+router.get('/', auth, validateTaskFilters, getAllTasks);
 
 // Obtener una tarea específica por ID
 router.get('/:id', auth, getTaskById);

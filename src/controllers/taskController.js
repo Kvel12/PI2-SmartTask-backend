@@ -10,15 +10,15 @@ const logger = require('../logger');
  */
 function normalizeDateForResponse(dateValue) {
   if (!dateValue) return null;
-  
+
   try {
     const date = new Date(dateValue);
     if (isNaN(date.getTime())) return null;
-    
+
     const year = date.getUTCFullYear();
     const month = String(date.getUTCMonth() + 1).padStart(2, '0');
     const day = String(date.getUTCDate()).padStart(2, '0');
-    
+
     return `${year}-${month}-${day}`;
   } catch (error) {
     logger.error(`Error normalizing date: ${error.message}`);
@@ -43,23 +43,31 @@ async function createTask(req, res) {
       return res.status(404).json({ message: 'Project not found' });
     }
 
+    // Validar que el status sea válido según las columnas del proyecto
+    const validStatuses = project.kanban_columns.map(col => col.id);
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({
+        message: `Invalid status '${status}'. Valid statuses for this project: ${validStatuses.join(', ')}`
+      });
+    }
+
     const task = await Task.create({
       title,
       description,
       creation_date,
       completion_date,
-      status,
+      status: status || validStatuses[0], // Usar primera columna por defecto
       projectId,
       assigned_member
     });
 
-    logger.info(`Task created: ${task.id}`);
-    
+    logger.info(`Task created: ${task.id} with status: ${task.status}`);
+
     // ✅ NORMALIZAR fechas antes de devolver
     const taskResponse = task.toJSON();
     taskResponse.completion_date = normalizeDateForResponse(task.completion_date);
     taskResponse.creation_date = normalizeDateForResponse(task.creation_date);
-    
+
     res.status(201).json(taskResponse);
   } catch (error) {
     logger.error(`Error creating task: ${error.message}`, error);
@@ -72,7 +80,16 @@ async function createTask(req, res) {
  */
 async function getAllTasks(req, res) {
   try {
+    const { assignee, status, dueDate, priority } = req.query;
+    const filters = {};
+
+    if (assignee) filters.assignee = assignee;
+    if (status) filters.status = status;
+    if (dueDate) filters.completion_date = dueDate;  // Filtra por fecha límite
+    if (priority) filters.priority = priority;
+
     const tasks = await Task.findAll({
+      where: filters,
       include: [
         {
           model: Project,
@@ -83,7 +100,7 @@ async function getAllTasks(req, res) {
     });
 
     logger.info('All tasks retrieved');
-    
+
     // ✅ NORMALIZAR fechas para todas las tareas
     const tasksResponse = tasks.map(task => {
       const taskData = task.toJSON();
@@ -91,7 +108,7 @@ async function getAllTasks(req, res) {
       taskData.creation_date = normalizeDateForResponse(task.creation_date);
       return taskData;
     });
-    
+
     res.status(200).json(tasksResponse);
   } catch (error) {
     logger.error(`Error getting all tasks: ${error.message}`, error);
@@ -117,7 +134,7 @@ async function getTasksByProject(req, res) {
     });
 
     logger.info(`Tasks retrieved for project: ${projectId}`);
-    
+
     // ✅ NORMALIZAR fechas para todas las tareas
     const tasksResponse = tasks.map(task => {
       const taskData = task.toJSON();
@@ -125,7 +142,7 @@ async function getTasksByProject(req, res) {
       taskData.creation_date = normalizeDateForResponse(task.creation_date);
       return taskData;
     });
-    
+
     res.status(200).json(tasksResponse);
   } catch (error) {
     logger.error(`Error getting tasks by project: ${error.message}`, error);
@@ -154,12 +171,12 @@ async function getTaskById(req, res) {
     }
 
     logger.info(`Task retrieved: ${task.id}`);
-    
+
     // ✅ NORMALIZAR fechas antes de devolver
     const taskResponse = task.toJSON();
     taskResponse.completion_date = normalizeDateForResponse(task.completion_date);
     taskResponse.creation_date = normalizeDateForResponse(task.creation_date);
-    
+
     res.status(200).json(taskResponse);
   } catch (error) {
     logger.error(`Error getting task: ${error.message}`, error);
@@ -185,32 +202,48 @@ async function updateTask(req, res) {
       return res.status(404).json({ message: 'Task not found' });
     }
 
+    // Determinar el proyecto actual o el nuevo si se cambia
+    let targetProjectId = task.projectId;
+
     if (projectId && projectId !== task.projectId) {
       const project = await Project.findByPk(projectId);
       if (!project) {
         return res.status(404).json({ message: 'Project not found' });
       }
       task.projectId = projectId;
+      targetProjectId = projectId;
+    }
+
+    // Validar status si se está actualizando
+    if (status !== undefined) {
+      const project = await Project.findByPk(targetProjectId);
+      const validStatuses = project.kanban_columns.map(col => col.id);
+
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          message: `Invalid status '${status}'. Valid statuses for this project: ${validStatuses.join(', ')}`
+        });
+      }
     }
 
     // ✅ CORREGIDO: Usar !== undefined para permitir valores vacíos
     if (title !== undefined) task.title = title;
     if (description !== undefined) task.description = description;
     if (creation_date !== undefined) task.creation_date = creation_date;
-    if (completion_date !== undefined) task.completion_date = completion_date;  // ✅ CORREGIDO
+    if (completion_date !== undefined) task.completion_date = completion_date;
     if (status !== undefined) task.status = status;
     if (assigned_member !== undefined) task.assigned_member = assigned_member;
 
     await task.save();
     logger.info(`Task updated: ${task.id}`);
-    
+
     // ✅ NORMALIZAR fechas antes de devolver
     const taskResponse = task.toJSON();
     taskResponse.completion_date = normalizeDateForResponse(task.completion_date);
     taskResponse.creation_date = normalizeDateForResponse(task.creation_date);
-    
+
     console.log('📅 Task response being sent:', taskResponse); // Para debugging
-    
+
     res.status(200).json(taskResponse);
   } catch (error) {
     logger.error(`Error updating task: ${error.message}`, error);
